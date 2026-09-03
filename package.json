@@ -1,0 +1,75 @@
+{
+  "name": "woocommerce-desktop-dashboard",
+  "productName": "داشبورد ووکامرس",
+  "version": "0.1.0",
+  "description": "مدیریت ووکامرس بدون ورود به پنل ادمین — دسکتاپ ویندوز",
+  "main": "dist-electron/main/main.js",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -k -s first \"npm:dev:renderer\" \"npm:dev:electron\"",
+    "dev:renderer": "vite",
+    "dev:electron": "wait-on tcp:127.0.0.1:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .",
+    "typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.web.json --noEmit",
+    "icon": "node scripts/gen-icon.mjs",
+    "build": "vite build && tsc -p tsconfig.node.json",
+    "dist": "npm run icon && npm run build && electron-builder",
+    "dist:dir": "npm run build && electron-builder --dir"
+  },
+  "dependencies": {
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "vazirmatn": "^33.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.1",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@vitejs/plugin-react": "^6.1.1",
+    "concurrently": "^10.0.5",
+    "cross-env": "^10.1.0",
+    "electron": "^37.10.3",
+    "electron-builder": "^26.15.3",
+    "typescript": "~5.9.0",
+    "vite": "^8.2.2",
+    "wait-on": "^9.1.0"
+  },
+  "allowScripts": {
+    "electron@37.10.3": true
+  },
+  "build": {
+    "appId": "ir.freebuff.woocommerce-dashboard",
+    "productName": "داشبورد ووکامرس",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "build/icon.png",
+      "package.json"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "داشبورد ووکامرس",
+      "language": "1045",
+      "deleteAppDataOnUninstall": false
+    },
+    "artifactName": "WooCommerce-Dashboard-Setup-${version}.${ext}"
+  }
+}
