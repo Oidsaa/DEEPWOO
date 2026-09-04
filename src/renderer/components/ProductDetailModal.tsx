@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { ProductDetail, ProductVariation, VariationPatch } from '../../shared/types'
 import { api } from '../api'
 import { faDate, faDigits, faNum, toLatin } from '../lib/format'
@@ -205,7 +206,7 @@ export default function ProductDetailModal({ productId, productName, onClose, on
 
   const product = result?.product
 
-  return (
+  return createPortal(
     <div
       className="modal-backdrop"
       onMouseDown={(e) => {
@@ -448,7 +449,8 @@ export default function ProductDetailModal({ productId, productName, onClose, on
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 

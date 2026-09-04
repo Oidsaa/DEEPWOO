@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { Product, ProductDetail, ProductPatch, VariationPatch } from '../../shared/types'
 import { api } from '../api'
 import { faNum, toLatin } from '../lib/format'
@@ -125,7 +126,7 @@ export default function BulkStockModal({ product, onClose, onChanged }: Props) {
     }
   }
 
-  return (
+  return createPortal(
     <div
       className="modal-backdrop"
       onMouseDown={(e) => {
@@ -277,6 +278,7 @@ export default function BulkStockModal({ product, onClose, onChanged }: Props) {
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }

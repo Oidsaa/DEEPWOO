@@ -2025,3 +2025,580 @@ table.tbl {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+
+/* ------------------------------------------------------------------ */
+/*  Orders table — fixed layout, checkbox selection, status + gateway  */
+/* ------------------------------------------------------------------ */
+.tbl-orders {
+  table-layout: fixed;
+}
+
+.tbl-orders th,
+.tbl-orders td {
+  padding-left: 14px;
+  padding-right: 14px;
+  overflow: hidden;
+}
+
+.tbl-orders .th-check,
+.tbl-orders .td-check {
+  text-align: center;
+}
+
+.tbl-orders input[type='checkbox'] {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--accent);
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+.tbl-orders .cell-orders-user {
+  min-width: 0;
+}
+
+.tbl-orders .u-name {
+  max-width: none;
+  width: 100%;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  line-height: 1.45;
+}
+
+.order-no {
+  font-weight: 800;
+  font-size: 13px;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  display: inline-block;
+}
+
+.cell-datetime {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cell-datetime span:first-child {
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.cell-time {
+  font-size: 11px;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.cell-status-gw {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.cell-gw {
+  font-size: 11px;
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  display: inline-block;
+}
+
+.sel-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 16px 4px;
+  padding: 9px 13px;
+  border-radius: var(--r-sm);
+  background: var(--accent-soft);
+  border: 1px solid rgba(45, 212, 191, 0.25);
+  color: var(--accent);
+  font-size: 12.5px;
+}
+
+.sel-bar .btn-ghost {
+  margin-inline-start: auto;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Order details modal                                                */
+/* ------------------------------------------------------------------ */
+.od-discount {
+  color: var(--red) !important;
+}
+
+.od-total {
+  color: var(--accent) !important;
+  font-size: 19px !important;
+}
+
+.od-items {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.od-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 9px 12px;
+  border-radius: var(--r-sm);
+  background: rgba(148, 163, 184, 0.045);
+  border: 1px solid rgba(148, 163, 184, 0.08);
+}
+
+.od-item-side {
+  background: transparent;
+  border-style: dashed;
+}
+
+.od-item-main {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.od-item-name {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.od-item-unit {
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+.od-item-meta {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+
+.meta-chip {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 99px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+
+.od-item-total {
+  flex: none;
+  font-size: 12.5px;
+  font-weight: 800;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.od-addr {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12.5px;
+  color: var(--ink);
+  line-height: 1.7;
+}
+
+.od-addr-sub {
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+
+.od-note {
+  font-size: 12.5px;
+  color: var(--ink-2);
+  background: rgba(251, 191, 36, 0.07);
+  border: 1px solid rgba(251, 191, 36, 0.2);
+  border-radius: var(--r-sm);
+  padding: 10px 13px;
+  line-height: 1.8;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Orders list — price column & order notes                           */
+/* ------------------------------------------------------------------ */
+.cell-price {
+  font-weight: 800;
+  color: var(--ink);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Order notes inside the details modal */
+.od-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-bottom: 2px;
+}
+
+.od-notes-skel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.od-note-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 9px 12px;
+  border-radius: var(--r-sm);
+  background: rgba(148, 163, 184, 0.045);
+  border: 1px solid rgba(148, 163, 184, 0.08);
+}
+
+.od-note-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 11px;
+}
+
+.od-note-head b {
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.od-note-date {
+  color: var(--ink-3);
+  font-size: 10.5px;
+  flex: 1;
+}
+
+.od-note-body {
+  font-size: 12px;
+  color: var(--ink-2);
+  line-height: 1.8;
+  white-space: pre-wrap;
+}
+
+.od-note-add {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 11px;
+  border-top: 1px dashed var(--line);
+}
+
+.od-note-add-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.chk-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--ink-2);
+  cursor: pointer;
+  user-select: none;
+}
+
+.chk-inline input {
+  accent-color: var(--accent);
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Order status change modal                                          */
+/* ------------------------------------------------------------------ */
+.st-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 7px;
+}
+
+.st-opt {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 6px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+  background: rgba(148, 163, 184, 0.03);
+  cursor: pointer;
+  transition: border-color 0.14s ease, background 0.14s ease, transform 0.12s ease;
+}
+
+.st-opt:hover {
+  border-color: rgba(45, 212, 191, 0.35);
+}
+
+.st-opt.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 1px rgba(45, 212, 191, 0.25);
+}
+
+.st-opt:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Order print menu & receipt preview modal                           */
+/* ------------------------------------------------------------------ */
+.act-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 64;
+}
+
+.act-menu {
+  position: fixed;
+  z-index: 65;
+  width: 232px;
+  padding: 6px;
+  border-radius: var(--r-md);
+  background: var(--card-solid);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  animation: popIn 0.14s ease;
+}
+
+.act-menu-title {
+  font-size: 10.5px;
+  font-weight: 800;
+  color: var(--ink-3);
+  padding: 3px 8px 5px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 2px;
+}
+
+.act-menu button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 7px 10px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--ink);
+  text-align: start;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.act-menu button:hover {
+  background: rgba(148, 163, 184, 0.08);
+}
+
+.act-menu button b {
+  font-size: 12.5px;
+  font-weight: 800;
+}
+
+.act-menu button span {
+  font-size: 10.5px;
+  color: var(--ink-3);
+}
+
+.rc-modal .modal-body {
+  gap: 12px;
+}
+
+.rc-types {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.rc-type {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 9px 6px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+  background: rgba(148, 163, 184, 0.03);
+  color: var(--ink);
+  cursor: pointer;
+  transition: border-color 0.14s ease, background 0.14s ease;
+}
+
+.rc-type b {
+  font-size: 12.5px;
+  font-weight: 800;
+}
+
+.rc-type span {
+  font-size: 10.5px;
+  color: var(--ink-3);
+}
+
+.rc-type.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 1px rgba(45, 212, 191, 0.25);
+}
+
+.rc-note {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+  color: var(--ink-2);
+  padding: 6px 10px;
+  border-radius: var(--r-sm);
+  background: rgba(148, 163, 184, 0.05);
+  border: 1px solid var(--line);
+}
+
+.rc-stage {
+  position: relative;
+  width: 100%;
+  min-height: 150px;
+  height: 58vh;
+  overflow: auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 14px;
+  border-radius: var(--r-md);
+  background: #c9cdd4;
+  border: 1px solid var(--line);
+}
+
+.rc-stage iframe {
+  background: #fff;
+}
+
+@media (max-width: 620px) {
+  .rc-types {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Receipt modal fits the viewport — the preview stage flexes to the
+   remaining space and scales the paper down, so no scrollbar appears. */
+.rc-modal.modal-xl {
+  height: calc(100vh - 70px);
+  max-height: calc(100vh - 70px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.rc-modal .modal-head {
+  flex: none;
+}
+
+.rc-modal .modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.rc-modal .modal-body::-webkit-scrollbar {
+  display: none;
+}
+
+.rc-modal .rc-stage {
+  height: auto;
+  flex: 1 1 auto;
+  min-height: 150px;
+  overflow: hidden;
+}
+
+/* Belt-and-braces: no scrollbar may ever appear inside the receipt modal. */
+.rc-modal,
+.rc-modal .modal-body,
+.rc-modal .rc-stage {
+  scrollbar-width: none;
+}
+
+.rc-modal::-webkit-scrollbar,
+.rc-modal .modal-body::-webkit-scrollbar,
+.rc-modal .rc-stage::-webkit-scrollbar {
+  display: none;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Settings — store-logo picker                                       */
+/* ------------------------------------------------------------------ */
+.logo-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.logo-preview {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  border-radius: var(--r-md);
+  border: 1px dashed var(--line);
+  background: rgba(148, 163, 184, 0.07);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+.logo-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.logo-preview .logo-del {
+  position: absolute;
+  top: 3px;
+  inset-inline-end: 3px;
+  background: rgba(15, 23, 42, 0.72);
+  color: #fca5a5;
+  border-radius: 7px;
+  padding: 4px;
+}
+
+.logo-preview .logo-del:hover {
+  background: rgba(15, 23, 42, 0.9);
+  color: #fecaca;
+}
+
+.logo-empty {
+  font-size: 10.5px;
+  color: var(--ink-3);
+  padding: 0 6px;
+}
+
+.file-btn {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+

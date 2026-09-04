@@ -7,11 +7,50 @@ import {
   IconEye,
   IconEyeOff,
   IconLink,
+  IconPrint,
   IconRefresh,
   IconShield,
   IconStore,
   IconTrash,
+  IconUpload,
 } from './Icons'
+
+/* ------------------------------------------------------------------ */
+/* Store-logo helpers (file → downscaled data URL, stored in settings) */
+/* ------------------------------------------------------------------ */
+
+function readAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader()
+    fr.onload = () => resolve(String(fr.result))
+    fr.onerror = () => reject(fr.error ?? new Error('خواندن فایل ناموفق بود'))
+    fr.readAsDataURL(file)
+  })
+}
+
+/** Downscale an image to ≤500px wide so settings.json stays small. */
+async function pickLogoDataUrl(file: File): Promise<string> {
+  const url = URL.createObjectURL(file)
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const im = new Image()
+      im.onload = () => resolve(im)
+      im.onerror = () => reject(new Error('فایل تصویر معتبر نیست'))
+      im.src = url
+    })
+    const maxW = 500
+    const scale = Math.min(1, maxW / (img.naturalWidth || 1))
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.max(1, Math.round(img.naturalWidth * scale))
+    canvas.height = Math.max(1, Math.round(img.naturalHeight * scale))
+    const ctx = canvas.getContext('2d')
+    if (!ctx) throw new Error('پردازش تصویر ممکن نیست')
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+    return canvas.toDataURL('image/png')
+  } finally {
+    URL.revokeObjectURL(url)
+  }
+}
 
 interface Props {
   settings: Settings | null
@@ -91,6 +130,21 @@ export default function SettingsView({ settings, conn, onSaved }: Props) {
       setTestResult({ ok: false, message: e instanceof Error ? e.message : String(e) })
     } finally {
       setTesting(false)
+    }
+  }
+
+  const handleLogoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    try {
+      set('storeLogo', await pickLogoDataUrl(file))
+    } catch {
+      try {
+        set('storeLogo', await readAsDataUrl(file))
+      } catch {
+        setValidation('انتخاب لوگو ناموفق بود؛ فایل تصویر دیگری را امتحان کنید.')
+      }
     }
   }
 
@@ -254,6 +308,135 @@ export default function SettingsView({ settings, conn, onSaved }: Props) {
                 <IconTrash size={14} />
                 {armClear ? 'برای تأیید دوباره کلیک کنید' : 'پاک کردن تنظیمات'}
               </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="panel" style={{ gridColumn: '1 / -1' }}>
+          <div className="panel-head">
+            <div>
+              <div className="panel-title">اطلاعات رسید</div>
+              <div className="panel-sub">
+                نام، آدرس، لوگو و تماس فروشگاه — روی رسید فروشگاه و رسید پستی چاپ می‌شود (اختیاری)
+              </div>
+            </div>
+            <div className="chip">
+              <IconPrint size={13} />
+              چاپ رسید
+            </div>
+          </div>
+
+          <div className="form-body">
+            <div className="field">
+              <label className="lbl" htmlFor="storeName">
+                نام فروشگاه
+              </label>
+              <input
+                id="storeName"
+                className="input"
+                type="text"
+                autoComplete="off"
+                placeholder="مثلاً: فروشگاه دیجیتال پارس"
+                value={form.storeName ?? ''}
+                onChange={(e) => set('storeName', e.target.value)}
+              />
+              <span className="f-hint">اگر خالی باشد، دامنهٔ سایت روی رسیدها نمایش داده می‌شود.</span>
+            </div>
+
+            <div className="field">
+              <label className="lbl">لوگوی فروشگاه</label>
+              <div className="logo-row">
+                <div className="logo-preview">
+                  {form.storeLogo ? (
+                    <>
+                      <img src={form.storeLogo} alt="لوگوی فروشگاه" />
+                      <button
+                        type="button"
+                        className="btn-icon logo-del"
+                        aria-label="حذف لوگو"
+                        onClick={() => set('storeLogo', undefined)}
+                      >
+                        <IconTrash size={14} />
+                      </button>
+                    </>
+                  ) : (
+                    <span className="logo-empty">لوگویی انتخاب نشده</span>
+                  )}
+                </div>
+                <label className="btn btn-ghost btn-sm file-btn">
+                  <IconUpload size={14} />
+                  {form.storeLogo ? 'تغییر لوگو' : 'انتخاب لوگو'}
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                    onChange={handleLogoChange}
+                    hidden
+                  />
+                </label>
+              </div>
+              <span className="f-hint">
+                تصویر مربعی با پس‌زمینهٔ شفاف بهتر است؛ به‌صورت خودکار تا عرض ۵۰۰ پیکسل کوچک می‌شود.
+              </span>
+            </div>
+
+            <div className="field">
+              <label className="lbl" htmlFor="storeAddress">
+                آدرس فروشگاه
+              </label>
+              <input
+                id="storeAddress"
+                className="input"
+                type="text"
+                autoComplete="off"
+                placeholder="استان، شهر، خیابان، پلاک"
+                value={form.storeAddress ?? ''}
+                onChange={(e) => set('storeAddress', e.target.value)}
+              />
+            </div>
+
+            <div className="field">
+              <label className="lbl" htmlFor="storePostcode">
+                کدپستی فروشگاه
+              </label>
+              <input
+                id="storePostcode"
+                className="input ltr"
+                type="text"
+                dir="ltr"
+                autoComplete="off"
+                placeholder="1234567890"
+                value={form.storePostcode ?? ''}
+                onChange={(e) => set('storePostcode', e.target.value)}
+              />
+            </div>
+
+            <div className="field">
+              <label className="lbl" htmlFor="storePhone">
+                شماره پشتیبانی
+              </label>
+              <input
+                id="storePhone"
+                className="input ltr"
+                type="text"
+                dir="ltr"
+                autoComplete="off"
+                placeholder="021-91000000"
+                value={form.storePhone ?? ''}
+                onChange={(e) => set('storePhone', e.target.value)}
+              />
+            </div>
+
+            <div className="form-actions">
+              <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving}>
+                {saving ? <IconRefresh size={16} className="spin" /> : <IconCheck size={16} />}
+                {saving ? 'در حال ذخیره…' : 'ذخیره تنظیمات'}
+              </button>
+              {savedFlash && (
+                <span className="save-msg">
+                  <IconCheck size={14} />
+                  ذخیره شد
+                </span>
+              )}
             </div>
           </div>
         </div>

@@ -1,6 +1,6 @@
 import type { ConnState, ViewId } from '../../shared/types'
 import { isMock } from '../api'
-import { IconBox, IconGear, IconStore, IconUsers } from './Icons'
+import { IconBag, IconBox, IconGear, IconStore, IconUsers } from './Icons'
 
 interface Props {
   view: ViewId
@@ -32,6 +32,14 @@ export default function Sidebar({ view, configured, host, conn, onNavigate }: Pr
         >
           <IconUsers size={18} />
           <span>مشتریان</span>
+        </button>
+        <button
+          type="button"
+          className={'sb-item' + (view === 'orders' ? ' active' : '')}
+          onClick={() => onNavigate('orders')}
+        >
+          <IconBag size={18} />
+          <span>سفارش‌ها</span>
         </button>
         <button
           type="button"

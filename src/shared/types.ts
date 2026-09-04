@@ -3,6 +3,13 @@ export interface Settings {
   siteUrl: string
   consumerKey: string
   consumerSecret: string
+  /** Store identity printed on receipts (all optional). */
+  storeName?: string
+  storeAddress?: string
+  storePostcode?: string
+  storePhone?: string
+  /** Store logo as a data URL (read from a local image file). */
+  storeLogo?: string
 }
 
 /** Minimal shape of a WooCommerce customer (/wp-json/wc/v3/customers). */
@@ -165,23 +172,33 @@ export interface ProductOrdersResult {
   truncated: boolean
 }
 
-/** Minimal shape of a WooCommerce order (/wp-json/wc/v3/orders). */
+/**
+ * Minimal shape of a WooCommerce order (/wp-json/wc/v3/orders). The list
+ * endpoint returns the full order objects, so the extra `?` detail fields
+ * below are also populated when present (they back the order-details panel).
+ */
 export interface Order {
   id: number
   number: string
   status: string
   date_created: string
+  date_modified?: string
   total: string
   currency: string
   payment_method_title: string
   customer_id: number
+  customer_note?: string
+  discount_total?: string
+  shipping_total?: string
   line_items: Array<{
     name: string
     quantity: number
     total: string
+    price?: string
+    sku?: string
     product_id?: number
     variation_id?: number
-    meta_data?: Array<{ key: string; value: string }>
+    meta_data?: Array<{ key: string; value: string; display_key?: string; display_value?: string }>
   }>
   billing: {
     first_name?: string
@@ -189,8 +206,26 @@ export interface Order {
     phone?: string
     email?: string
     city?: string
+    state?: string
     address_1?: string
+    address_2?: string
+    postcode?: string
+    country?: string
   }
+  shipping?: {
+    first_name?: string
+    last_name?: string
+    address_1?: string
+    address_2?: string
+    city?: string
+    state?: string
+    postcode?: string
+    country?: string
+  }
+  shipping_lines?: Array<{ method_title?: string; total?: string }>
+  coupon_lines?: Array<{ code?: string; discount?: string }>
+  /** Display name of the order's customer (billing name, or the linked account's name). */
+  customer_name?: string
 }
 
 export interface OrdersResult {
@@ -205,6 +240,52 @@ export interface OrdersResult {
   purchaseSum: number
   /** زمانی true که سفارش‌های بیشتری از سقف محاسبه وجود داشته باشد. */
   purchaseSumTruncated: boolean
+}
+
+/** One page of the store-wide orders list (newest first). */
+export interface OrdersListResult {
+  orders: Order[]
+  total: number
+  totalPages: number
+  page: number
+  perPage: number
+}
+
+export interface ListOrdersQuery {
+  search?: string
+  page?: number
+  perPage?: number
+}
+
+/** One order note (GET/POST /wp-json/wc/v3/orders/{id}/notes). */
+export interface OrderNote {
+  id: number
+  author: string
+  date_created: string
+  note: string
+  /** true → customer note (also emailed / visible on the storefront); false → private/system note. */
+  customer_note: boolean
+  /** true when written by a human (shop manager) through the admin. */
+  added_by_user: boolean
+}
+
+/** Payload for POST /wp-json/wc/v3/orders/{id}/notes. */
+export interface OrderNotePayload {
+  note: string
+  customer_note?: boolean
+}
+
+/** Kinds of printable order receipts. */
+export type ReceiptType = 'postal' | 'warehouse' | 'store'
+
+/** Document handed to the main process for printing (its own full HTML doc). */
+export interface PrintReceiptDoc {
+  type: ReceiptType
+  /** Printable width of the paper in mm (used to size the hidden window). */
+  widthMm: number
+  /** Landscape hint for the print dialog (e.g. the 210 mm postal strip). */
+  landscape?: boolean
+  html: string
 }
 
 /** Payload for creating a customer (POST /wp-json/wc/v3/customers). */
@@ -256,6 +337,12 @@ export interface ApiBridge {
   listCustomers(query: ListCustomersQuery): Promise<CustomersResult>
   createCustomer(payload: CustomerPayload): Promise<Customer>
   listCustomerOrders(customerId: number): Promise<OrdersResult>
+  listOrders(query: ListOrdersQuery): Promise<OrdersListResult>
+  listOrderNotes(orderId: number): Promise<OrderNote[]>
+  createOrderNote(orderId: number, payload: OrderNotePayload): Promise<OrderNote>
+  updateOrderStatus(orderId: number, status: string): Promise<Order>
+  /** Print a receipt document through the system print dialog (desktop only). */
+  printReceipt(doc: PrintReceiptDoc): Promise<{ ok: boolean }>
   getStoreStats(): Promise<StoreStats>
   listProducts(query: ListProductsQuery): Promise<ProductsResult>
   getProductDetail(productId: number): Promise<ProductDetail>
@@ -265,7 +352,7 @@ export interface ApiBridge {
   listProductOrders(productId: number): Promise<ProductOrdersResult>
 }
 
-export type ViewId = 'customers' | 'products' | 'settings'
+export type ViewId = 'customers' | 'orders' | 'products' | 'settings'
 export type ConnState =
   | { state: 'idle' }
   | { state: 'checking' }

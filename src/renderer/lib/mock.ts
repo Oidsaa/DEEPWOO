@@ -5,8 +5,12 @@ import type {
   CustomerPayload,
   CustomersResult,
   ListCustomersQuery,
+  ListOrdersQuery,
   ListProductsQuery,
   Order,
+  OrderNote,
+  OrderNotePayload,
+  OrdersListResult,
   OrdersResult,
   Product,
   ProductDetail,
@@ -20,6 +24,7 @@ import type {
   VariationPatch,
 } from '../../shared/types'
 import { persianMonthKey } from '../../shared/persianMonth'
+import { orderStatusMeta } from './format'
 
 /* ------------------------------------------------------------------ */
 /* Seeded pseudo-random data so the preview looks stable & realistic   */
@@ -138,6 +143,10 @@ export const DEMO_SETTINGS: Settings = {
   siteUrl: 'https://shop.example.com',
   consumerKey: 'ck_demo_preview_only',
   consumerSecret: 'cs_demo_preview_only',
+  storeName: 'فروشگاه آزمایشی',
+  storeAddress: 'تهران، خیابان ولیعصر، کوچهٔ آزادی، پلاک ۱۲',
+  storePostcode: '۱۹۶۴۶۷۳۳۱۱',
+  storePhone: '۰۲۱-۹۱۰۰۴۲۳۱',
 }
 
 /**
@@ -401,6 +410,65 @@ const ORDER_STATUS = [
   'failed',
 ]
 
+const SHIP_METHODS = ['پست پیشتاز', 'پست سفارشی', 'تیپاکس', 'پیک موتوری']
+const COUPON_CODES = ['SAVE10', 'WELCOME', 'OFF5', 'NOFAN']
+const STREETS = ['ولیعصر', 'انقلاب', 'شریعتی', 'مطهری', 'سعدی', 'فردوسی', 'بهشتی', 'آزادی']
+const CITY_PROV: Record<string, string> = {
+  تهران: 'تهران', اصفهان: 'اصفهان', شیراز: 'فارس', مشهد: 'خراسان رضوی', تبریز: 'آذربایجان شرقی',
+  کرج: 'البرز', قم: 'قم', اهواز: 'خوزستان', رشت: 'گیلان', یزد: 'یزد', ارومیه: 'آذربایجان غربی',
+  زنجان: 'زنجان', ساری: 'مازندران', گرگان: 'گلستان',
+}
+
+interface MockOrderExtras {
+  shipping_total: string
+  discount_total: string
+  method_title: string
+  coupon?: { code: string; discount: string }
+  note?: string
+  state?: string
+  address_1?: string
+  postcode?: string
+  country: string
+}
+
+/**
+ * Plausible shipping/coupon/address details for one order. Its own seeded
+ * stream (never the order's main `rnd`) keeps line items, dates and statuses
+ * unchanged; the caller folds shipping/coupon into the order total so the
+ * amounts stay internally consistent.
+ */
+function mockOrderExtras(key: number, countryIn?: string, cityIn?: string): MockOrderExtras {
+  const rnd = seeded(key)
+  const ir = (countryIn ?? 'IR') === 'IR'
+  const country: string = ir ? 'IR' : countryIn || 'IR'
+  const method_title = SHIP_METHODS[Math.floor(rnd() * SHIP_METHODS.length)]
+  const shipping = rnd() > 0.16 ? Math.round((rnd() * 42 + 8) * 100) / 100 : 0
+  const hasCoupon = rnd() > 0.82
+  const discount = hasCoupon ? Math.round((rnd() * 20 + 4) * 100) / 100 : 0
+  const note = rnd() > 0.9 ? 'لطفاً پیش از ارسال هماهنگ کنید.' : undefined
+  let state: string | undefined
+  let address_1: string | undefined
+  let postcode: string | undefined
+  if (ir) {
+    const city = cityIn && CITY_PROV[cityIn] ? cityIn : Object.keys(CITY_PROV)[Math.floor(rnd() * Object.keys(CITY_PROV).length)]
+    state = CITY_PROV[city]
+    address_1 =
+      'خیابان ' + STREETS[Math.floor(rnd() * STREETS.length)] + '، کوچهٔ ' + (1 + Math.floor(rnd() * 28)) + '، پلاک ' + (1 + Math.floor(rnd() * 180))
+    postcode = String(1 + Math.floor(rnd() * 9)) + String(Math.floor(rnd() * 1000000000)).padStart(9, '0')
+  }
+  return {
+    shipping_total: String(shipping),
+    discount_total: discount ? String(discount) : '',
+    method_title,
+    coupon: discount ? { code: COUPON_CODES[Math.floor(rnd() * COUPON_CODES.length)], discount: String(discount) } : undefined,
+    note,
+    state,
+    address_1,
+    postcode,
+    country,
+  }
+}
+
 /** Deterministic, plausible order history for one customer (newest first). */
 function makeOrders(customer: Customer): Order[] {
   const n = Math.min(customer.orders_count || 0, 60)
@@ -416,29 +484,51 @@ function makeOrders(customer: Customer): Order[] {
     const lines = Array.from({ length: lineCount }, () => {
       const name = PRODUCTS[Math.floor(rnd() * PRODUCTS.length)]
       const quantity = 1 + Math.floor(rnd() * 3)
-      const total = Math.round((rnd() * 480 + 20) * 100) / 100
-      return { name, quantity, total: String(total) }
+      const unit = Math.round((rnd() * 480 + 20) * 100) / 100
+      const total = Math.round(unit * quantity * 100) / 100
+      return { name, quantity, unit: String(unit), total: String(total) }
     })
-    const total = Math.round(lines.reduce((a, l) => a + Number(l.total) * l.quantity, 0) * 100) / 100
+    const itemsTotal = Math.round(lines.reduce((a, l) => a + Number(l.total), 0) * 100) / 100
     const status = ORDER_STATUS[Math.floor(rnd() * ORDER_STATUS.length)]
     const frac = (n - i - rnd() * 0.7) / n
     const date = new Date(reg + span * Math.min(0.995, Math.max(0.001, frac)))
+    const pay = PAY_METHODS[Math.floor(rnd() * PAY_METHODS.length)]
+    const x = mockOrderExtras(customer.id * 7919 + i * 104729 + 31, customer.billing.country, customer.billing.city)
+    const discount = Number(x.discount_total) || 0
+    const shipTotal = Number(x.shipping_total) || 0
+    const total = Math.max(0, Math.round((itemsTotal - discount + shipTotal) * 100) / 100)
+    const shipAddress = x.country === 'IR'
+      ? { state: x.state, address_1: x.address_1, postcode: x.postcode, city: customer.billing.city, country: 'IR' }
+      : { city: customer.billing.city, country: x.country }
 
     orders.push({
       id: customer.id * 1000 + i + 1,
       number: String(60000 + customer.id * 100 + i),
       status,
       date_created: date.toISOString(),
+      date_modified: new Date(date.getTime() + 3600 * 1000 + Math.floor(rnd() * 7200) * 1000).toISOString(),
       total: String(total),
       currency: '',
-      payment_method_title: PAY_METHODS[Math.floor(rnd() * PAY_METHODS.length)],
+      payment_method_title: pay,
       customer_id: customer.id,
-      line_items: lines,
+      customer_name: customer.first_name + ' ' + customer.last_name,
+      discount_total: x.discount_total || undefined,
+      shipping_total: String(shipTotal),
+      customer_note: x.note,
+      line_items: lines.map((l) => ({ name: l.name, quantity: l.quantity, price: l.unit, total: l.total })),
+      shipping_lines: [{ method_title: x.method_title, total: String(shipTotal) }],
+      coupon_lines: x.coupon ? [x.coupon] : undefined,
       billing: {
         first_name: customer.first_name,
         last_name: customer.last_name,
         phone: customer.billing.phone,
+        city: customer.billing.city,
+        country: x.country,
+        state: x.state,
+        address_1: x.address_1,
+        postcode: x.postcode,
       },
+      shipping: shipAddress,
     })
   }
 
@@ -446,6 +536,112 @@ function makeOrders(customer: Customer): Order[] {
   orders.sort((a, b) => +new Date(b.date_created) - +new Date(a.date_created))
   return orders
 }
+
+/* ------------------------- store-wide orders mock ------------------- */
+
+/** A handful of guest-checkout orders (no linked customer account). */
+function makeGuestOrders(): Order[] {
+  const rnd = seeded(88001)
+  const orders: Order[] = []
+  const now = Date.now()
+  for (let i = 0; i < 14; i++) {
+    const f = NAMES[Math.floor(rnd() * NAMES.length)]
+    const l = LAST[Math.floor(rnd() * LAST.length)]
+    const lineCount = 1 + Math.floor(rnd() * 2)
+    const lines = Array.from({ length: lineCount }, () => {
+      const name = PRODUCTS[Math.floor(rnd() * PRODUCTS.length)]
+      const quantity = 1 + Math.floor(rnd() * 2)
+      const unit = Math.round((rnd() * 420 + 30) * 100) / 100
+      const total = Math.round(unit * quantity * 100) / 100
+      return { name, quantity, unit: String(unit), total: String(total) }
+    })
+    const itemsTotal = Math.round(lines.reduce((a, x) => a + Number(x.total), 0) * 100) / 100
+    const day = Math.floor(rnd() * 620) // 0..~20 months back
+    const date = new Date(now - day * 86400000 - Math.floor(rnd() * 86400000))
+    const pay = PAY_METHODS[Math.floor(rnd() * PAY_METHODS.length)]
+    const x = mockOrderExtras(900000 + i * 8191 + 77, 'IR')
+    const discount = Number(x.discount_total) || 0
+    const shipTotal = Number(x.shipping_total) || 0
+    const total = Math.max(0, Math.round((itemsTotal - discount + shipTotal) * 100) / 100)
+    orders.push({
+      id: 300000 + i + 1,
+      number: String(50000 + i + 1),
+      status: ORDER_STATUS[Math.floor(rnd() * ORDER_STATUS.length)],
+      date_created: date.toISOString(),
+      date_modified: new Date(date.getTime() + 3600 * 1000 + Math.floor(rnd() * 7200) * 1000).toISOString(),
+      total: String(total),
+      currency: '',
+      payment_method_title: pay,
+      customer_id: 0,
+      customer_name: f.fa + ' ' + l.fa,
+      discount_total: x.discount_total || undefined,
+      shipping_total: String(shipTotal),
+      customer_note: x.note,
+      line_items: lines.map((l) => ({ name: l.name, quantity: l.quantity, price: l.unit, total: l.total })),
+      shipping_lines: [{ method_title: x.method_title, total: String(shipTotal) }],
+      coupon_lines: x.coupon ? [x.coupon] : undefined,
+      billing: {
+        first_name: f.fa,
+        last_name: l.fa,
+        country: 'IR',
+        state: x.state,
+        address_1: x.address_1,
+        postcode: x.postcode,
+      },
+      shipping: { state: x.state, address_1: x.address_1, postcode: x.postcode, country: 'IR' },
+    })
+  }
+  return orders
+}
+
+/** All store orders (newest first), lazily built and cached until a customer is created. */
+let ordersCache: Order[] | null = null
+
+function allOrders(): Order[] {
+  if (ordersCache) return ordersCache
+  const orders: Order[] = []
+  for (const c of ALL) orders.push(...makeOrders(c))
+  orders.push(...makeGuestOrders())
+  orders.sort((a, b) => +new Date(b.date_created) - +new Date(a.date_created))
+  ordersCache = orders
+  return orders
+}
+
+/* ------------------------- order notes mock ------------------------ */
+
+/** Deterministic note history for one order (system → private → customer). */
+function mockOrderNotes(order: Order): OrderNote[] {
+  const created = new Date(order.date_created).getTime()
+  const notes: OrderNote[] = []
+  const push = (hours: number, author: string, note: string, customerNote: boolean, addedByUser: boolean) => {
+    notes.push({
+      id: order.id * 1000 + notes.length + 1,
+      author,
+      date_created: new Date(created + hours * 3600 * 1000).toISOString(),
+      note,
+      customer_note: customerNote,
+      added_by_user: addedByUser,
+    })
+  }
+  push(
+    0.05,
+    'WooCommerce',
+    `سفارش ایجاد شد و وضعیت «${orderStatusMeta(order.status).fa}» ثبت گردید.`,
+    false,
+    false,
+  )
+  if (order.customer_note) {
+    push(0.2, order.customer_name ?? 'مشتری', order.customer_note, true, false)
+  }
+  const total = Number(order.total) || 0
+  if (total > 0 && !PURCHASE_EXCLUDED.has(order.status)) {
+    push(1.5, 'مدیر فروشگاه', `پرداخت تأیید شد — مبلغ ${total} تومان دریافت گردید.`, false, true)
+  }
+  return notes
+}
+
+/** Notes added through the app during this session (prepended to the generated ones). */
+const userOrderNotes = new Map<number, OrderNote[]>()
 
 export const mockApi: ApiBridge = {
   async getSettings(): Promise<Settings> {
@@ -656,6 +852,69 @@ export const mockApi: ApiBridge = {
       purchaseSumTruncated: false,
     }
   },
+  async listOrders(query: ListOrdersQuery): Promise<OrdersListResult> {
+    await delay(600)
+    if (!isDemoSettings(storedSettings())) throw new Error(NOT_REAL_MSG)
+    const search = (query.search ?? '').trim().toLowerCase()
+    let list = allOrders()
+    if (search) {
+      list = list.filter(
+        (o) =>
+          o.number.toLowerCase().includes(search) ||
+          (o.customer_name ?? '').toLowerCase().includes(search) ||
+          (o.billing?.phone ?? '').toLowerCase().includes(search),
+      )
+    }
+    const perPage = Math.min(100, Math.max(1, query.perPage ?? 50))
+    const page = Math.max(1, query.page ?? 1)
+    const start = (page - 1) * perPage
+    return {
+      orders: list.slice(start, start + perPage),
+      total: list.length,
+      totalPages: Math.max(1, Math.ceil(list.length / perPage)),
+      page,
+      perPage,
+    }
+  },
+  async listOrderNotes(orderId: number): Promise<OrderNote[]> {
+    await delay(450)
+    if (!isDemoSettings(storedSettings())) throw new Error(NOT_REAL_MSG)
+    const order = allOrders().find((o) => o.id === orderId)
+    const userNotes = userOrderNotes.get(orderId) ?? []
+    if (!order) return userNotes
+    return [...userNotes, ...mockOrderNotes(order)]
+  },
+  async createOrderNote(orderId: number, payload: OrderNotePayload) {
+    await delay(500)
+    if (!isDemoSettings(storedSettings())) throw new Error(NOT_REAL_MSG)
+    const text = (payload.note ?? '').trim()
+    if (!text) throw new Error('متن یادداشت را وارد کنید.')
+    const entry: OrderNote = {
+      id: Date.now(),
+      author: 'مدیر فروشگاه',
+      date_created: new Date().toISOString(),
+      note: text,
+      customer_note: !!payload.customer_note,
+      added_by_user: true,
+    }
+    const list = userOrderNotes.get(orderId) ?? []
+    list.unshift(entry)
+    userOrderNotes.set(orderId, list)
+    return entry
+  },
+  async updateOrderStatus(orderId: number, status: string) {
+    await delay(550)
+    if (!isDemoSettings(storedSettings())) throw new Error(NOT_REAL_MSG)
+    const order = allOrders().find((o) => o.id === orderId)
+    if (!order) throw new Error('سفارش موردنظر پیدا نشد.')
+    order.status = status
+    order.date_modified = new Date().toISOString()
+    return order
+  },
+  async printReceipt() {
+    // Printing is a desktop-only capability (system print dialog).
+    throw new Error('چاپ فقط در نسخهٔ دسکتاپ برنامه در دسترس است.')
+  },
   async createCustomer(payload: CustomerPayload) {
     await delay(700)
     const email = (payload.email ?? '').trim()
@@ -694,6 +953,7 @@ export const mockApi: ApiBridge = {
       },
     }
     ALL = [created, ...ALL]
+    ordersCache = null // the new customer has no orders, but the cache also covers guest data
     return created
   },
 }

@@ -3,8 +3,12 @@ import type {
   Customer,
   CustomerPayload,
   CustomersResult,
+  ListOrdersQuery,
   ListProductsQuery,
   Order,
+  OrderNote,
+  OrderNotePayload,
+  OrdersListResult,
   OrdersResult,
   Product,
   ProductDetail,
@@ -391,6 +395,98 @@ export async function listProductOrders(cfg: WooConfig, productId: number): Prom
 /** Create a customer (POST /customers). Requires a Read/Write API key. */
 export async function createCustomer(cfg: WooConfig, payload: CustomerPayload): Promise<Customer> {
   const { data } = await wooRequest<Customer>(cfg, 'POST', '/customers', {}, payload)
+  return data
+}
+
+/* ------------------------------------------------------------------ */
+/* Store-wide orders list (سفارش‌ها)                                    */
+/* ------------------------------------------------------------------ */
+
+/** Session cache of customer display names for orders whose billing name is empty. */
+const customerNameCache = new Map<string, string>()
+
+/** Display name of an order's customer: billing name first, then the account. */
+async function customerNameOf(cfg: WooConfig, order: Order): Promise<string> {
+  const billingName = [order.billing?.first_name, order.billing?.last_name].filter(Boolean).join(' ').trim()
+  if (billingName) return billingName
+  const id = order.customer_id
+  if (!id) return 'مشتری مهمان'
+  const key = cfg.siteUrl + '|' + id
+  const hit = customerNameCache.get(key)
+  if (hit) return hit
+  try {
+    const { data } = await wooRequest<Customer>(cfg, 'GET', '/customers/' + id)
+    const name = [data.first_name, data.last_name].filter(Boolean).join(' ').trim()
+    if (name) {
+      customerNameCache.set(key, name)
+      return name
+    }
+  } catch {
+    // Account may be deleted — fall through to the id-based label.
+  }
+  const label = 'مشتری #' + id
+  customerNameCache.set(key, label)
+  return label
+}
+
+/**
+ * One page of the store's orders, newest first. Shows every status (failed,
+ * cancelled, … included) so the store manager can act on all of them; the
+ * status-based exclusion rule only applies to sales totals elsewhere.
+ */
+export async function listOrders(cfg: WooConfig, query: ListOrdersQuery): Promise<OrdersListResult> {
+  const perPage = Math.min(100, Math.max(1, query.perPage ?? 50))
+  const page = Math.max(1, query.page ?? 1)
+  const params: Record<string, string | number> = {
+    per_page: perPage,
+    page,
+    orderby: 'date',
+    order: 'desc',
+  }
+  const search = (query.search ?? '').trim()
+  if (search) params.search = search
+
+  const { data, headers } = await wooRequest<Order[]>(cfg, 'GET', '/orders', params)
+  const orders = await Promise.all(data.map(async (o) => ({ ...o, customer_name: await customerNameOf(cfg, o) })))
+  return {
+    orders,
+    total: Number(headers.get('x-wp-total') ?? data.length),
+    totalPages: Math.max(1, Number(headers.get('x-wp-totalpages') ?? 1)),
+    page,
+    perPage,
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Order notes (یادداشت‌های سفارش)                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Notes of one order (GET /orders/{id}/notes), newest first. Private and
+ * system notes are included for authenticated (read/write) API consumers.
+ */
+export async function listOrderNotes(cfg: WooConfig, orderId: number): Promise<OrderNote[]> {
+  const { data } = await wooRequest<OrderNote[]>(cfg, 'GET', `/orders/${orderId}/notes`, {
+    per_page: 100,
+    orderby: 'date',
+    order: 'desc',
+  })
+  return data
+}
+
+/** Add a note to an order (POST /orders/{id}/notes). Requires a Read/Write key. */
+export async function createOrderNote(
+  cfg: WooConfig,
+  orderId: number,
+  payload: OrderNotePayload,
+): Promise<OrderNote> {
+  const { data } = await wooRequest<OrderNote>(cfg, 'POST', `/orders/${orderId}/notes`, {}, payload)
+  return data
+}
+
+/** Change an order's status (PUT /orders/{id} with { status }). */
+export async function updateOrderStatus(cfg: WooConfig, orderId: number, status: string): Promise<Order> {
+  const { data } = await wooRequest<Order>(cfg, 'PUT', '/orders/' + orderId, {}, { status })
   return data
 }
 

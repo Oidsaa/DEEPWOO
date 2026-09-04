@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { Product, ProductDetail } from '../../shared/types'
 import { api } from '../api'
 import { faNum, toLatin } from '../lib/format'
@@ -136,7 +137,7 @@ export default function BulkPriceModal({ product, onClose, onChanged }: Props) {
 
   const targetWord = isVariable ? 'ترکیب' : 'محصول'
 
-  return (
+  return createPortal(
     <div
       className="modal-backdrop"
       onMouseDown={(e) => {
@@ -312,6 +313,7 @@ export default function BulkPriceModal({ product, onClose, onChanged }: Props) {
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }

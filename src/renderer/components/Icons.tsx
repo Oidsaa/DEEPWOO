@@ -153,6 +153,31 @@ export const IconWallet = (p: P) => (
   </svg>
 )
 
+export const IconPrint = (p: P) => (
+  <svg {...base(p)}>
+    <path d="M6 9V2h12v7" />
+    <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
+    <path d="M6 14h12v8H6z" />
+  </svg>
+)
+
+export const IconSwap = (p: P) => (
+  <svg {...base(p)}>
+    <path d="m16 3 4 4-4 4" />
+    <path d="M20 7H4" />
+    <path d="m8 21-4-4 4-4" />
+    <path d="M4 17h16" />
+  </svg>
+)
+
+export const IconNote = (p: P) => (
+  <svg {...base(p)}>
+    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    <path d="M8 9h8" />
+    <path d="M8 13h5" />
+  </svg>
+)
+
 export const IconBag = (p: P) => (
   <svg {...base(p)}>
     <path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" />
@@ -188,5 +213,13 @@ export const IconLayers = (p: P) => (
     <path d="m12 2 8.5 4.5L12 11 3.5 6.5z" />
     <path d="m3.5 12 8.5 4.5 8.5-4.5" />
     <path d="m3.5 17 8.5 4.5 8.5-4.5" />
+  </svg>
+)
+
+export const IconUpload = (p: P) => (
+  <svg {...base(p)}>
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+    <path d="m17 8-5-5-5 5" />
+    <path d="M12 3v12" />
   </svg>
 )

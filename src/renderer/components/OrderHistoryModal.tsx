@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { Customer, Order, OrdersResult } from '../../shared/types'
 import { api } from '../api'
 import { avatarPalette, faDate, faDigits, faNum, orderStatusMeta } from '../lib/format'
@@ -56,7 +57,7 @@ export default function OrderHistoryModal({ customer, onClose }: Props) {
   const pal = avatarPalette(String(customer.id) + customer.username + customer.email)
   const name = [customer.first_name, customer.last_name].filter(Boolean).join(' ') || customer.username || customer.email
 
-  return (
+  return createPortal(
     <div
       className="modal-backdrop"
       onMouseDown={(e) => {
@@ -166,7 +167,8 @@ export default function OrderHistoryModal({ customer, onClose }: Props) {
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 

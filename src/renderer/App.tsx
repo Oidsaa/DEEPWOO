@@ -3,6 +3,7 @@ import type { ConnState, Settings, ViewId } from '../shared/types'
 import { api, bridgeMissing } from './api'
 import { DEMO_SETTINGS } from './lib/mock'
 import CustomersView from './components/CustomersView'
+import OrdersView from './components/OrdersView'
 import ProductsView from './components/ProductsView'
 import SettingsView from './components/SettingsView'
 import Sidebar from './components/Sidebar'
@@ -104,6 +105,13 @@ export default function App() {
             conn={conn}
             onGoSettings={() => setView('settings')}
             onUseDemo={handleUseDemo}
+          />
+        ) : view === 'orders' ? (
+          <OrdersView
+            key={`${configured}-${settings?.siteUrl ?? ''}-${conn.state}`}
+            configured={configured}
+            conn={conn}
+            onGoSettings={() => setView('settings')}
           />
         ) : view === 'products' ? (
           <ProductsView

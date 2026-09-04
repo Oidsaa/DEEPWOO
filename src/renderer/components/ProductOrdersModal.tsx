@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { Order, Product, ProductOrdersResult } from '../../shared/types'
 import { api } from '../api'
 import { faDate, faDigits, faNum, orderStatusMeta } from '../lib/format'
@@ -64,7 +65,7 @@ export default function ProductOrdersModal({ product, onClose }: Props) {
       .slice(0, 12)
   }, [result, product.id])
 
-  return (
+  return createPortal(
     <div
       className="modal-backdrop"
       onMouseDown={(e) => {
@@ -200,7 +201,8 @@ export default function ProductOrdersModal({ product, onClose }: Props) {
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 

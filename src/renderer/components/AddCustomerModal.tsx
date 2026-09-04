@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { CustomerPayload } from '../../shared/types'
 import { api } from '../api'
 import { faDigits, phoneDigits } from '../lib/format'
@@ -90,7 +91,7 @@ export default function AddCustomerModal({ onClose, onCreated }: Props) {
     }
   }
 
-  return (
+  return createPortal(
     <div
       className="modal-backdrop"
       onMouseDown={(e) => {
@@ -278,6 +279,7 @@ export default function AddCustomerModal({ onClose, onCreated }: Props) {
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }

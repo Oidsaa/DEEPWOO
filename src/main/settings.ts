@@ -17,6 +17,11 @@ export function getSettings(): Settings {
       siteUrl: typeof data.siteUrl === 'string' ? data.siteUrl : '',
       consumerKey: typeof data.consumerKey === 'string' ? data.consumerKey : '',
       consumerSecret: typeof data.consumerSecret === 'string' ? data.consumerSecret : '',
+      storeName: typeof data.storeName === 'string' ? data.storeName : undefined,
+      storeAddress: typeof data.storeAddress === 'string' ? data.storeAddress : undefined,
+      storePostcode: typeof data.storePostcode === 'string' ? data.storePostcode : undefined,
+      storePhone: typeof data.storePhone === 'string' ? data.storePhone : undefined,
+      storeLogo: typeof data.storeLogo === 'string' ? data.storeLogo : undefined,
     }
   } catch {
     return { ...EMPTY }
@@ -42,6 +47,11 @@ export function sanitizeSettings(input: Settings): Settings {
     siteUrl: normalizeSiteUrl(input.siteUrl),
     consumerKey: input.consumerKey.trim(),
     consumerSecret: input.consumerSecret.trim(),
+    storeName: (input.storeName ?? '').trim() || undefined,
+    storeAddress: (input.storeAddress ?? '').trim() || undefined,
+    storePostcode: (input.storePostcode ?? '').trim() || undefined,
+    storePhone: (input.storePhone ?? '').trim() || undefined,
+    storeLogo: (input.storeLogo ?? '').trim() || undefined,
   }
 }
 
