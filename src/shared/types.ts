@@ -251,10 +251,21 @@ export interface OrdersListResult {
   perPage: number
 }
 
+/** Document handed to the main process for BULK printing (one big HTML doc). */
+export interface PrintBulkDoc {
+  type: ReceiptType
+  widthMm: number
+  heightMm: number
+  landscape: boolean
+  html: string
+}
+
 export interface ListOrdersQuery {
   search?: string
   page?: number
   perPage?: number
+  /** Only these order ids (bulk print fetch — respects WooCommerce `include`). */
+  include?: number[]
 }
 
 /** One order note (GET/POST /wp-json/wc/v3/orders/{id}/notes). */
@@ -343,6 +354,8 @@ export interface ApiBridge {
   updateOrderStatus(orderId: number, status: string): Promise<Order>
   /** Print a receipt document through the system print dialog (desktop only). */
   printReceipt(doc: PrintReceiptDoc): Promise<{ ok: boolean }>
+  /** Print a BULK document (several receipts on one paper layout). */
+  printBulk(doc: PrintBulkDoc): Promise<{ ok: boolean }>
   getStoreStats(): Promise<StoreStats>
   listProducts(query: ListProductsQuery): Promise<ProductsResult>
   getProductDetail(productId: number): Promise<ProductDetail>

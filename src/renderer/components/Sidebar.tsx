@@ -1,5 +1,6 @@
 import type { ConnState, ViewId } from '../../shared/types'
 import { isMock } from '../api'
+import { faDigits } from '../lib/format'
 import { IconBag, IconBox, IconGear, IconStore, IconUsers } from './Icons'
 
 interface Props {
@@ -7,10 +8,11 @@ interface Props {
   configured: boolean
   host: string | null
   conn: ConnState
+  storeName: string | null
   onNavigate: (view: ViewId) => void
 }
 
-export default function Sidebar({ view, configured, host, conn, onNavigate }: Props) {
+export default function Sidebar({ view, configured, host, conn, storeName, onNavigate }: Props) {
   return (
     <aside className="sidebar">
       <div className="sb-brand">
@@ -19,7 +21,7 @@ export default function Sidebar({ view, configured, host, conn, onNavigate }: Pr
         </div>
         <div>
           <div className="sb-name">داشبورد ووکامرس</div>
-          <div className="sb-tag">مدیریت فروشگاه روی دسکتاپ</div>
+          <div className="sb-tag">مدیریت فروشگاه «{storeName ?? 'ووکامرس'}»</div>
         </div>
       </div>
 
@@ -62,7 +64,7 @@ export default function Sidebar({ view, configured, host, conn, onNavigate }: Pr
       <div className="sb-foot">
         {renderConnection()}
         {isMock && <div className="mock-chip">پیش‌نمایش با دادهٔ آزمایشی</div>}
-        <div className="sb-ver">نسخهٔ ۰٫۱٫۰</div>
+        <div className="sb-ver">نسخهٔ {faDigits('1.1')}</div>
       </div>
     </aside>
   )

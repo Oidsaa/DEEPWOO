@@ -427,3 +427,195 @@ export function buildReceiptDoc(
   if (type === 'warehouse') return warehouseReceiptHtml(order, shop, notes)
   return storeReceiptHtml(order, shop)
 }
+
+/* ------------------------------------------------------------------ */
+/* BULK printing                                                       */
+/* ------------------------------------------------------------------ */
+
+/** Result of building one BULK print document (multiple orders, one doc). */
+export interface BulkReceiptDoc {
+  type: ReceiptType
+  html: string
+  widthMm: number
+  heightMm: number
+  landscape: boolean
+  /** Orders included in the document. */
+  count: number
+  /** A4 sheets (or roll segments) the layout produced. */
+  pages: number
+}
+
+const A4W = 210
+const A4H = 297
+const fmtD = (n: number): string => n.toFixed(2)
+
+/**
+ * Extract the inner sheet markup + its kind CSS from a single-receipt
+ * document, so bulk layouts reuse the EXACT same receipt rendering.
+ */
+function sheetOf(doc: ReceiptDoc): { body: string; skin: string } {
+  const m = doc.html.match(/<body>([\s\S]*?)<\/body>/)
+  const inner = m ? m[1] : ''
+  const idx = inner.indexOf('<style>')
+  return { body: idx >= 0 ? inner.slice(0, idx) : inner, skin: idx >= 0 ? inner.slice(idx) : '' }
+}
+
+/** Page chrome for A4 bulk documents: stacked portrait A4 pages. */
+function bulkA4Html(pages: string[], title: string): string {
+  return `<!doctype html><html lang="fa" dir="rtl"><head><meta charset="utf-8"/>
+<title>${title}</title>
+<style>
+  @page { size: ${A4W}mm ${A4H}mm; margin: 0; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { margin: 0; padding: 0; background: #fff; }
+  body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .pg { width: ${A4W}mm; height: ${A4H}mm; overflow: hidden; position: relative;
+    direction: rtl; page-break-after: always; break-after: page;
+    font-family: 'Vazirmatn', 'Tahoma', 'Segoe UI', sans-serif; color: #111; }
+  .pg:last-child { page-break-after: auto; break-after: auto; }
+  .num { direction: ltr; unicode-bidi: embed; font-variant-numeric: tabular-nums; }
+  .dash { border: 0; border-top: 1px dashed #9aa0a6; margin: 1.2mm 0; }
+</style></head><body>${pages.join('\n')}</body></html>`
+}
+
+/** Page chrome for the 80mm thermal roll: one continuous page. */
+function bulkRollHtml(body: string, widthMm: number, heightMm: number): string {
+  return `<!doctype html><html lang="fa" dir="rtl"><head><meta charset="utf-8"/>
+<title>چاپ گروهی رسید فروشگاه</title>
+<style>
+  @page { size: ${widthMm}mm ${heightMm}mm; margin: 0; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { margin: 0; padding: 0; background: #fff; }
+  body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .num { direction: ltr; unicode-bidi: embed; font-variant-numeric: tabular-nums; }
+  .sheet.store { width: ${widthMm}mm; height: auto; overflow: visible; }
+  .sheet.store + .sheet.store { border-top: 1.5px dashed #999; }
+  .dash { border: 0; border-top: 1px dashed #9aa0a6; margin: 1.2mm 0; }
+</style></head><body>${body}</body></html>`
+}
+
+/**
+ * Bulk STORE — 80mm thermal roll: receipts stacked back to back at the same
+ * 80mm width, one continuous document (cut marks between receipts).
+ */
+export function bulkStoreHtml(orders: Order[], shop: ReceiptShop): BulkReceiptDoc {
+  const docs = orders.map((o) => storeReceiptHtml(o, shop))
+  const bodies = docs.map((d) => sheetOf(d).body).join('\n')
+  const skin = docs.length ? sheetOf(docs[0]).skin : ''
+  const totalH = mm(docs.reduce((a, d) => a + d.heightMm, 0))
+  return {
+    type: 'store',
+    html: bulkRollHtml(bodies + skin, 80, totalH),
+    widthMm: 80,
+    heightMm: totalH,
+    landscape: false,
+    count: orders.length,
+    pages: docs.length,
+  }
+}
+
+const POSTAL_PER_SHEET = 7
+
+/**
+ * Bulk POSTAL — A4 portrait, exactly 7 labels per sheet.
+ * 7 × 42mm + 6 × 0.5mm gaps = 297mm = one full A4.
+ */
+export function bulkPostalHtml(orders: Order[], shop: ReceiptShop): BulkReceiptDoc {
+  const pages: string[] = []
+  for (let i = 0; i < orders.length; i += POSTAL_PER_SHEET) {
+    const slice = orders.slice(i, i + POSTAL_PER_SHEET)
+    const cells = slice.map((o) => `<div class="cell">${sheetOf(postalReceiptHtml(o, shop)).body}</div>`).join('')
+    pages.push(
+      `<div class="pg">
+        <style>
+          .pg.postal-a4 { display: flex; flex-direction: column; justify-content: center; gap: 0.5mm; }
+          .pg .cell { width: ${A4W}mm; height: 42mm; overflow: hidden; }
+          .pg .cell .sheet.postal { width: ${A4W}mm; height: 42mm; }
+        </style>
+        ${cells}
+      </div>`,
+    )
+  }
+  const html = bulkA4Html(pages, 'چاپ گروهی رسید پستی')
+  // inject the postal skin once, right before </head>
+  const skin = orders.length ? sheetOf(postalReceiptHtml(orders[0], shop)).skin : ''
+  return {
+    type: 'postal',
+    html: html.replace('</head>', `${skin}</head>`),
+    widthMm: A4W,
+    heightMm: A4H,
+    landscape: false,
+    count: orders.length,
+    pages: pages.length,
+  }
+}
+
+/**
+ * Bulk WAREHOUSE — A4 portrait, 2 columns of 100mm labels. Rows pack
+ * greedily; each row's height = its TALLER label, so a tall label pushes
+ * the whole row (never clipped, never overlapping the next row).
+ */
+export function bulkWarehouseHtml(
+  orders: Order[],
+  shop: ReceiptShop,
+  notesOf: (orderId: number) => OrderNote[],
+): BulkReceiptDoc {
+  const GAP_X = 10 // 2 × 100mm columns + 10mm gutter = 210mm A4 width
+  const GAP_Y = 3
+
+  // RTL pairing: first order of each pair lands in the RIGHT column.
+  const pairs: Array<{ a: Order; b: Order | null; h: number }> = []
+  for (let i = 0; i < orders.length; i += 2) {
+    const a = orders[i]
+    const b = i + 1 < orders.length ? orders[i + 1] : null
+    const hA = warehouseReceiptHtml(a, shop, notesOf(a.id)).heightMm
+    const hB = b ? warehouseReceiptHtml(b, shop, notesOf(b.id)).heightMm : 0
+    pairs.push({ a, b, h: mm(Math.max(hA, hB)) })
+  }
+
+  // Greedy row packing into A4 sheets.
+  const sheets: Array<Array<{ a: Order; b: Order | null; h: number }>> = [[]]
+  let used = 0
+  for (const p of pairs) {
+    const need = used === 0 ? p.h : used + GAP_Y + p.h
+    if (need > A4H && sheets[sheets.length - 1].length > 0) {
+      sheets.push([])
+      used = p.h
+    } else {
+      used = need
+    }
+    sheets[sheets.length - 1].push(p)
+  }
+
+  const pages = sheets.map((rows) => {
+    const cells = rows
+      .map((r) => {
+        const cell = (o: Order | null): string =>
+          o ? `<div class="cell">${sheetOf(warehouseReceiptHtml(o, shop, notesOf(o.id))).body}</div>` : '<div class="cell empty"></div>'
+        return `<div class="row" style="height:${fmtD(r.h)}mm">${cell(r.a)}${cell(r.b)}</div>`
+      })
+      .join('')
+    return `<div class="pg">
+      <style>
+        .pg.wh-a4 { display: flex; flex-direction: column; align-items: center; }
+        .pg .row { width: ${A4W - GAP_X}mm; display: grid; grid-template-columns: 1fr 1fr; column-gap: ${GAP_X}mm; }
+        .pg .row + .row { margin-top: ${GAP_Y}mm; }
+        .pg .cell { width: 100mm; overflow: hidden; }
+        .pg .cell.empty { visibility: hidden; }
+      </style>
+      ${cells}
+    </div>`
+  })
+
+  const html = bulkA4Html(pages, 'چاپ گروهی رسید انبارداری')
+  const skin = orders.length ? sheetOf(warehouseReceiptHtml(orders[0], shop, notesOf(orders[0].id))).skin : ''
+  return {
+    type: 'warehouse',
+    html: html.replace('</head>', `${skin}</head>`),
+    widthMm: A4W,
+    heightMm: A4H,
+    landscape: false,
+    count: orders.length,
+    pages: pages.length,
+  }
+}

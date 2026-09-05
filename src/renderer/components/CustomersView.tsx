@@ -23,6 +23,7 @@ const PER_PAGE_OPTIONS = [25, 50, 100] as const
 interface Props {
   configured: boolean
   conn: ConnState
+  storeName: string | null
   onGoSettings: () => void
   onUseDemo?: () => void
 }
@@ -35,7 +36,7 @@ function initialsOf(c: Customer): string {
   return u.slice(0, 2).toUpperCase()
 }
 
-export default function CustomersView({ configured, conn, onGoSettings, onUseDemo }: Props) {
+export default function CustomersView({ configured, conn, storeName, onGoSettings, onUseDemo }: Props) {
   const [searchInput, setSearchInput] = useState('')
   const [params, setParams] = useState({ search: '', page: 1, perPage: 100 })
   const [data, setData] = useState<CustomersResult | null>(null)
@@ -161,7 +162,7 @@ export default function CustomersView({ configured, conn, onGoSettings, onUseDem
             )}
           </div>
           <div className="page-sub">
-            فهرست مشتریان فروشگاه ووکامرس — بدون ورود به پیشخوان وردپرس.{' '}
+            فهرست مشتریان فروشگاه «{storeName ?? 'ووکامرس'}»{' '}
             <span style={{ color: 'var(--ink-3)' }}>برای مشاهدهٔ تاریخچهٔ سفارش‌ها، روی سطر هر مشتری کلیک کنید.</span>
           </div>
         </div>

@@ -435,6 +435,26 @@ async function customerNameOf(cfg: WooConfig, order: Order): Promise<string> {
  * status-based exclusion rule only applies to sales totals elsewhere.
  */
 export async function listOrders(cfg: WooConfig, query: ListOrdersQuery): Promise<OrdersListResult> {
+  // Bulk print fetch: `include` pins the exact ids (≤100 per request, so chunk).
+  if (query.include && query.include.length > 0) {
+    const CHUNK = 100
+    const chunks: number[][] = []
+    for (let i = 0; i < query.include.length; i += CHUNK) chunks.push(query.include.slice(i, i + CHUNK))
+    const results = await Promise.all(
+      chunks.map(async (ids) => {
+        const { data } = await wooRequest<Order[]>(cfg, 'GET', '/orders', {
+          include: ids.join(','),
+          per_page: Math.min(100, ids.length),
+        })
+        return data
+      }),
+    )
+    const byId = new Map(results.flat().map((o) => [o.id, o]))
+    const ordered = query.include.map((id) => byId.get(id)).filter((o): o is Order => !!o)
+    const orders = await Promise.all(ordered.map(async (o) => ({ ...o, customer_name: await customerNameOf(cfg, o) })))
+    return { orders, total: orders.length, totalPages: 1, page: 1, perPage: orders.length }
+  }
+
   const perPage = Math.min(100, Math.max(1, query.perPage ?? 50))
   const page = Math.max(1, query.page ?? 1)
   const params: Record<string, string | number> = {

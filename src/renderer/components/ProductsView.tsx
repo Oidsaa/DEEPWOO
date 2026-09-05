@@ -43,6 +43,7 @@ const PUB_STATUS: Record<string, { fa: string; cls: string }> = {
 interface Props {
   configured: boolean
   conn: ConnState
+  storeName: string | null
   onGoSettings: () => void
 }
 
@@ -83,7 +84,7 @@ function PriceCell({ product }: { product: Product }) {
   )
 }
 
-export default function ProductsView({ configured, conn, onGoSettings }: Props) {
+export default function ProductsView({ configured, conn, storeName, onGoSettings }: Props) {
   const [searchInput, setSearchInput] = useState('')
   const [params, setParams] = useState({ search: '', status: '', stockStatus: '', page: 1, perPage: 100 })
   const [data, setData] = useState<ProductsResult | null>(null)
@@ -186,7 +187,7 @@ export default function ProductsView({ configured, conn, onGoSettings }: Props) 
             )}
           </div>
           <div className="page-sub">
-            محصولات فروشگاه ووکامرس — موجودی، فروش و ترکیبات هر کالا.{' '}
+            محصولات فروشگاه «{storeName ?? 'ووکامرس'}»{' '}
             <span style={{ color: 'var(--ink-3)' }}>همهٔ وضعیت‌ها (منتشرشده، خصوصی، پیش‌نویس و…) نمایش داده می‌شوند.</span>
           </div>
         </div>

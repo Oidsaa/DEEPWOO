@@ -24,6 +24,7 @@ import type {
   ListOrdersQuery,
   ListProductsQuery,
   OrderNotePayload,
+  PrintBulkDoc,
   PrintReceiptDoc,
   ProductPatch,
   ProductPayload,
@@ -65,6 +66,49 @@ function createWindow(): void {
     void win.loadURL(devUrl)
   } else {
     void win.loadFile(path.join(__dirname, '../../dist/index.html'))
+  }
+}
+
+type PrintableDoc = Pick<PrintReceiptDoc, 'widthMm' | 'landscape' | 'html'>
+
+/**
+ * Load a print document in a hidden window and open the system print dialog.
+ * Windows opens the native print dialog only when the printing window is
+ * visible, focused and settled. NOTE: the PROMISE form of webContents.print
+ * resolves instantly WITHOUT opening the dialog on Windows (Electron 37), so
+ * the callback form must be used — it fires only after the dialog closes.
+ */
+async function printViaDialog(doc: PrintableDoc): Promise<{ ok: boolean }> {
+  const win = new BrowserWindow({
+    show: false,
+    width: Math.max(560, Math.min(1200, Math.round((doc.widthMm || 100) * 3.9))),
+    height: 640,
+    autoHideMenuBar: true,
+    title: 'چاپ رسید',
+    backgroundColor: '#ffffff',
+    webPreferences: { sandbox: true },
+  })
+  const payload = 'data:text/html;charset=utf-8,' + encodeURIComponent(doc.html)
+  try {
+    await win.loadURL(payload)
+    win.show()
+    win.focus()
+    // Give the window manager + layout a moment before opening the dialog.
+    await new Promise((r) => setTimeout(r, 600))
+    const ok = await new Promise<boolean>((resolve) => {
+      win.webContents.print(
+        {
+          silent: false,
+          printBackground: true,
+          landscape: !!doc.landscape,
+          margins: { marginType: 'none' },
+        },
+        (success) => resolve(success),
+      )
+    })
+    return { ok }
+  } finally {
+    if (!win.isDestroyed()) win.destroy()
   }
 }
 
@@ -260,41 +304,14 @@ function registerIpc(): void {
     if (!doc || typeof doc.html !== 'string' || !doc.html) {
       throw new Error('سند چاپ نامعتبر است.')
     }
-    // Windows opens the native print dialog only when the printing window is
-    // visible, focused and settled. NOTE: the PROMISE form of webContents.print
-    // resolves instantly WITHOUT opening the dialog on Windows (Electron 37), so
-    // the callback form must be used — it fires only after the dialog closes.
-    const win = new BrowserWindow({
-      show: false,
-      width: Math.max(560, Math.min(1200, Math.round((doc.widthMm || 100) * 3.9))),
-      height: 640,
-      autoHideMenuBar: true,
-      title: 'چاپ رسید',
-      backgroundColor: '#ffffff',
-      webPreferences: { sandbox: true },
-    })
-    const payload = 'data:text/html;charset=utf-8,' + encodeURIComponent(doc.html)
-    try {
-      await win.loadURL(payload)
-      win.show()
-      win.focus()
-      // Give the window manager + layout a moment before opening the dialog.
-      await new Promise((r) => setTimeout(r, 600))
-      const ok = await new Promise<boolean>((resolve) => {
-        win.webContents.print(
-          {
-            silent: false,
-            printBackground: true,
-            landscape: !!doc.landscape,
-            margins: { marginType: 'none' },
-          },
-          (success) => resolve(success),
-        )
-      })
-      return { ok }
-    } finally {
-      if (!win.isDestroyed()) win.destroy()
+    return printViaDialog(doc)
+  })
+
+  ipcMain.handle('print:bulk', async (_event, doc: PrintBulkDoc) => {
+    if (!doc || typeof doc.html !== 'string' || !doc.html) {
+      throw new Error('سند چاپ گروهی نامعتبر است.')
     }
+    return printViaDialog(doc)
   })
 
   ipcMain.handle('wc:product-orders', async (_event, productId: number) => {

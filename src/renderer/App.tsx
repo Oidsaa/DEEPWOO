@@ -87,6 +87,8 @@ export default function App() {
   }
 
   const configured = isConfigured(settings)
+  /** Store name from «اطلاعات رسید» (Settings), shown across the UI. */
+  const storeName = (settings?.storeName ?? '').trim() || null
 
   return (
     <div className="app">
@@ -95,6 +97,7 @@ export default function App() {
         configured={configured}
         host={hostOf(settings?.siteUrl ?? '')}
         conn={conn}
+        storeName={storeName}
         onNavigate={setView}
       />
       <main className="main">
@@ -103,6 +106,7 @@ export default function App() {
             key={`${configured}-${settings?.siteUrl ?? ''}-${conn.state}`}
             configured={configured}
             conn={conn}
+            storeName={storeName}
             onGoSettings={() => setView('settings')}
             onUseDemo={handleUseDemo}
           />
@@ -111,6 +115,7 @@ export default function App() {
             key={`${configured}-${settings?.siteUrl ?? ''}-${conn.state}`}
             configured={configured}
             conn={conn}
+            storeName={storeName}
             onGoSettings={() => setView('settings')}
           />
         ) : view === 'products' ? (
@@ -118,6 +123,7 @@ export default function App() {
             key={`${configured}-${settings?.siteUrl ?? ''}-${conn.state}`}
             configured={configured}
             conn={conn}
+            storeName={storeName}
             onGoSettings={() => setView('settings')}
           />
         ) : (

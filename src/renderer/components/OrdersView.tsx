@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { MouseEvent as ReactMouseEvent } from 'react'
-import type { ConnState, Order, OrdersListResult, ReceiptType } from '../../shared/types'
+import type { ConnState, Order, OrderNote, OrdersListResult, ReceiptType } from '../../shared/types'
 import { api, isMock } from '../api'
 import { avatarPalette, faDate, faDigits, faNum, faTime, orderStatusMeta } from '../lib/format'
-import { RECEIPT_KINDS } from '../lib/print'
+import { bulkPostalHtml, bulkStoreHtml, bulkWarehouseHtml, RECEIPT_KINDS, type BulkReceiptDoc, type ReceiptShop } from '../lib/print'
 import {
   IconAlert,
   IconBag,
@@ -27,10 +27,11 @@ const PER_PAGE_OPTIONS = [25, 50, 100] as const
 interface Props {
   configured: boolean
   conn: ConnState
+  storeName: string | null
   onGoSettings: () => void
 }
 
-export default function OrdersView({ configured, conn, onGoSettings }: Props) {
+export default function OrdersView({ configured, conn, storeName, onGoSettings }: Props) {
   const [searchInput, setSearchInput] = useState('')
   const [params, setParams] = useState({ search: '', page: 1, perPage: 50 })
   const [data, setData] = useState<OrdersListResult | null>(null)
@@ -45,6 +46,70 @@ export default function OrdersView({ configured, conn, onGoSettings }: Props) {
   const [statusOrder, setStatusOrder] = useState<Order | null>(null)
   /** Bulk status change for the selected orders. */
   const [bulkStatus, setBulkStatus] = useState(false)
+  /** Bulk print: menu open + its viewport anchor, or building/sending. */
+  const [bulkPrintOpen, setBulkPrintOpen] = useState(false)
+  const [bulkPrintPos, setBulkPrintPos] = useState({ top: 0, right: 0 })
+  const [bulkPrintBusy, setBulkPrintBusy] = useState(false)
+  const [bulkPrintError, setBulkPrintError] = useState<string | null>(null)
+  /** Result of a bulk print preview (kept for the confirmation panel). */
+  const [bulkResult, setBulkResult] = useState<{ ok: boolean; message: string } | null>(null)
+
+  /**
+   * چاپ گروهی: selected orders (across pages) are re-fetched by id (with the
+   * store's own sort), their notes are loaded, and one big document is built
+   * with the chosen receipt layout and sent to the system print dialog.
+   */
+  const runBulkPrint = async (type: ReceiptType) => {
+    if (bulkPrintBusy) return
+    setBulkPrintBusy(true)
+    setBulkPrintError(null)
+    setBulkResult(null)
+    try {
+      const ids = [...selectedIds]
+      const list = await api.listOrders({ include: ids, perPage: Math.max(1, ids.length) })
+      const orders = list.orders
+      if (orders.length === 0) throw new Error('سفارش انتخاب‌شده‌ای برای چاپ پیدا نشد.')
+      // Warehouse labels include manager/customer notes — load them once per order.
+      const notesLists = await Promise.all(
+        orders.map((o) =>
+          api
+            .listOrderNotes(o.id)
+            .then((n) => [o.id, n] as const)
+            .catch(() => [o.id, [] as OrderNote[]] as const),
+        ),
+      )
+      const notesMap = new Map(notesLists)
+      const notesOf = (orderId: number): OrderNote[] => notesMap.get(orderId) ?? []
+      const s = await api.getSettings()
+      let host = ''
+      try {
+        host = new URL(s.siteUrl || '').hostname.replace(/^www\./, '')
+      } catch {
+        host = ''
+      }
+      const shop: ReceiptShop = {
+        name: s.storeName || host,
+        domain: host,
+        address: s.storeAddress,
+        postcode: s.storePostcode,
+        phone: s.storePhone,
+        logo: s.storeLogo,
+      }
+      let doc: BulkReceiptDoc
+      if (type === 'store') doc = bulkStoreHtml(orders, shop)
+      else if (type === 'postal') doc = bulkPostalHtml(orders, shop)
+      else doc = bulkWarehouseHtml(orders, shop, notesOf)
+      await api.printBulk({ type: doc.type, widthMm: doc.widthMm, heightMm: doc.heightMm, landscape: doc.landscape, html: doc.html })
+      setBulkResult({
+        ok: true,
+        message: `درخواست چاپ گروهی ${faNum(orders.length)} سفارش ارسال شد (${faNum(doc.pages)} ${doc.type === 'store' ? 'بخش روی نوار' : 'برگهٔ A4'}).`,
+      })
+    } catch (e) {
+      setBulkPrintError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBulkPrintBusy(false)
+    }
+  }
   /** Row whose print menu is open (the three receipt kinds), with its anchor. */
   const [printMenu, setPrintMenu] = useState<{ order: Order; top: number; right: number } | null>(null)
   /** Receipt modal target + its initially selected kind. */
@@ -127,9 +192,7 @@ export default function OrdersView({ configured, conn, onGoSettings }: Props) {
               </span>
             )}
           </div>
-          <div className="page-sub">
-            همهٔ سفارش‌های فروشگاه به‌همراه وضعیت و درگاه پرداخت — جدیدترین‌ها در ابتدا.
-          </div>
+          <div className="page-sub">سفارشات فروشگاه «{storeName ?? 'ووکامرس'}»</div>
         </div>
       </div>
 
@@ -221,6 +284,53 @@ export default function OrdersView({ configured, conn, onGoSettings }: Props) {
                 <IconSwap size={14} />
                 تغییر وضعیت گروهی
               </button>
+              <div className="bulk-print-wrap" style={{ position: 'relative' }}>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-primary"
+                  onClick={(e) => {
+                    setBulkResult(null)
+                    setBulkPrintError(null)
+                    const r = e.currentTarget.getBoundingClientRect()
+                    setBulkPrintPos({ top: r.bottom + 6, right: window.innerWidth - r.right })
+                    setBulkPrintOpen((o) => !o)
+                  }}
+                  disabled={bulkPrintBusy}
+                  title="چاپ رسید همهٔ سفارش‌های انتخاب‌شده"
+                >
+                  <IconPrint size={14} />
+                  {bulkPrintBusy ? 'در حال آماده‌سازی…' : 'چاپ گروهی'}
+                </button>
+                {bulkPrintOpen &&
+                  createPortal(
+                    <>
+                      <div className="act-backdrop" onClick={() => setBulkPrintOpen(false)} />
+                      <div
+                        className="act-menu"
+                        role="menu"
+                        aria-label="نوع رسید گروهی"
+                        style={{ top: bulkPrintPos.top, right: bulkPrintPos.right }}
+                      >
+                        <div className="act-menu-title">قالب چاپ گروهی</div>
+                        {RECEIPT_KINDS.map((k) => (
+                          <button
+                            key={k.type}
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                              setBulkPrintOpen(false)
+                              void runBulkPrint(k.type)
+                            }}
+                          >
+                            <b>{k.fa}</b>
+                            <span>{k.sub}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </>,
+                    document.body,
+                  )}
+              </div>
               <button
                 type="button"
                 className="btn btn-sm btn-ghost"
@@ -323,6 +433,19 @@ export default function OrdersView({ configured, conn, onGoSettings }: Props) {
                 setLoadCount((n) => n + 1)
               }}
             />
+          )}
+
+          {bulkPrintError && (
+            <div className="notice err" style={{ margin: '0 16px 8px' }}>
+              <IconAlert size={15} />
+              <div style={{ flex: 1 }}>{bulkPrintError}</div>
+            </div>
+          )}
+          {bulkResult && (
+            <div className="notice ok" style={{ margin: '0 16px 8px' }}>
+              <IconCheck size={15} />
+              <div style={{ flex: 1 }}>{bulkResult.message}</div>
+            </div>
           )}
 
           {bulkStatus && selectedIds.size > 0 && (

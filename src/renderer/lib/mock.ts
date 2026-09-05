@@ -855,6 +855,19 @@ export const mockApi: ApiBridge = {
   async listOrders(query: ListOrdersQuery): Promise<OrdersListResult> {
     await delay(600)
     if (!isDemoSettings(storedSettings())) throw new Error(NOT_REAL_MSG)
+    // Bulk print fetch: when `include` ids are given, search/pagination are ignored.
+    if (query.include && query.include.length > 0) {
+      const set = new Set(query.include)
+      const byId = new Map(allOrders().filter((o) => set.has(o.id)).map((o) => [o.id, o]))
+      const ordered = query.include.map((id) => byId.get(id)).filter((o): o is Order => !!o)
+      return {
+        orders: ordered,
+        total: ordered.length,
+        totalPages: 1,
+        page: 1,
+        perPage: ordered.length,
+      }
+    }
     const search = (query.search ?? '').trim().toLowerCase()
     let list = allOrders()
     if (search) {
@@ -914,6 +927,10 @@ export const mockApi: ApiBridge = {
   async printReceipt() {
     // Printing is a desktop-only capability (system print dialog).
     throw new Error('چاپ فقط در نسخهٔ دسکتاپ برنامه در دسترس است.')
+  },
+  async printBulk() {
+    // Printing is a desktop-only capability (system print dialog).
+    throw new Error('چاپ گروهی فقط در نسخهٔ دسکتاپ برنامه در دسترس است.')
   },
   async createCustomer(payload: CustomerPayload) {
     await delay(700)
