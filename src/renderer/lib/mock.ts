@@ -626,10 +626,13 @@ function mockOrderNotes(order: Order): OrderNote[] {
   push(
     0.05,
     'WooCommerce',
-    `سفارش ایجاد شد و وضعیت «${orderStatusMeta(order.status).fa}» ثبت گردید.`,
+    `سیستم: سفارش ایجاد شد و وضعیت «${orderStatusMeta(order.status).fa}» ثبت گردید.`,
     false,
     false,
   )
+  // Some real stores show gateway/status events as admin-flagged notes —
+  // deliberately mimicked here so the printable filter can be proven against them.
+  push(0.8, 'WooCommerce', `وضعیت سفارش از «در انتظار پرداخت» به «در حال پردازش» تغییر کرد.`, false, true)
   if (order.customer_note) {
     push(0.2, order.customer_name ?? 'مشتری', order.customer_note, true, false)
   }

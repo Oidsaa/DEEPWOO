@@ -294,6 +294,25 @@ function estLines(text: string, perLine = 24): number {
 }
 
 // این فاکتور پیش خود فروشگاه می‌ماند؛ نام فروشگاه روی آن چاپ نمی‌شود.
+/**
+ * Notes shown on the warehouse receipt: ONLY admin + customer notes.
+ * System-generated notes (order/gateway events) are always excluded —
+ * flagged `added_by_user: false`, or written by system authors, or system
+ * status-change narrations even when the API sends inconsistent flags.
+ */
+export function filterPrintableNotes(notes: OrderNote[]): OrderNote[] {
+  // High-specificity system narrations only — deliberately NOT generic
+  // phrases a human manager might legitimately write (e.g. «پرداخت تأیید شد»).
+  const SYSTEM_RE = /(وضعیت سفارش از.+به.+تغییر کرد|سفارش ایجاد شد|بروزرسانی وضعیت سفارش|order status changed|status changed to|payment complete|order created)/i
+  const SYSTEM_AUTHOR_RE = /^(woocommerce|system|ووکامرس|سیستم)$/i
+  return notes.filter((n) => {
+    if (n.customer_note) return true // customer notes always shown
+    if (SYSTEM_AUTHOR_RE.test((n.author || '').trim())) return false
+    if (n.added_by_user === false) return false
+    return !SYSTEM_RE.test(n.note || '')
+  })
+}
+
 export function warehouseReceiptHtml(order: Order, _shop: ReceiptShop, notes: OrderNote[] = []): ReceiptDoc {
   const rows = lineRows(order)
   const w = 100
@@ -304,7 +323,9 @@ export function warehouseReceiptHtml(order: Order, _shop: ReceiptShop, notes: Or
   // یادداشت مدیر = نوشتهٔ یک ادمین (غیرسیستم و غیرمشتری)؛ یادداشت مشتری =
   // علامت‌گذاری‌شده برای مشتری + یادداشت ثبت‌شده هنگام خرید (order.customer_note)
   // که در فروشگاه‌های واقعی ممکن است فقط در همین فیلد نگهداری شود.
-  const adminNotes = notes.filter((n) => n.added_by_user && !n.customer_note)
+  // یادداشت‌های سیستمی (WooCommerce/درگاه‌ها؛ added_by_user=false) هرگز نمایش
+  // داده نمی‌شوند — حتی وقتی فلگ‌های ناسازگار از API می‌آیند.
+  const adminNotes = filterPrintableNotes(notes)
   const checkoutNote = (order.customer_note || '').trim()
   const customerNotes = notes.filter((n) => n.customer_note)
   if (checkoutNote && !customerNotes.some((n) => n.note === checkoutNote)) {

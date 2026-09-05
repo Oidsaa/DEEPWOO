@@ -5,6 +5,7 @@ import type { ConnState, Order, OrderNote, OrdersListResult, ReceiptType } from 
 import { api, isMock } from '../api'
 import { avatarPalette, faDate, faDigits, faNum, faTime, orderStatusMeta } from '../lib/format'
 import { bulkPostalHtml, bulkStoreHtml, bulkWarehouseHtml, RECEIPT_KINDS, type BulkReceiptDoc, type ReceiptShop } from '../lib/print'
+import BulkPrintModal from './BulkPrintModal'
 import {
   IconAlert,
   IconBag,
@@ -51,19 +52,19 @@ export default function OrdersView({ configured, conn, storeName, onGoSettings }
   const [bulkPrintPos, setBulkPrintPos] = useState({ top: 0, right: 0 })
   const [bulkPrintBusy, setBulkPrintBusy] = useState(false)
   const [bulkPrintError, setBulkPrintError] = useState<string | null>(null)
-  /** Result of a bulk print preview (kept for the confirmation panel). */
-  const [bulkResult, setBulkResult] = useState<{ ok: boolean; message: string } | null>(null)
+  /** Built bulk document shown in the preview modal (prints only on confirm). */
+  const [bulkDoc, setBulkDoc] = useState<BulkReceiptDoc | null>(null)
 
   /**
    * چاپ گروهی: selected orders (across pages) are re-fetched by id (with the
    * store's own sort), their notes are loaded, and one big document is built
-   * with the chosen receipt layout and sent to the system print dialog.
+   * with the chosen receipt layout and opened as a PREVIEW — printing is a
+   * separate, manual confirm inside the modal.
    */
   const runBulkPrint = async (type: ReceiptType) => {
     if (bulkPrintBusy) return
     setBulkPrintBusy(true)
     setBulkPrintError(null)
-    setBulkResult(null)
     try {
       const ids = [...selectedIds]
       const list = await api.listOrders({ include: ids, perPage: Math.max(1, ids.length) })
@@ -99,11 +100,7 @@ export default function OrdersView({ configured, conn, storeName, onGoSettings }
       if (type === 'store') doc = bulkStoreHtml(orders, shop)
       else if (type === 'postal') doc = bulkPostalHtml(orders, shop)
       else doc = bulkWarehouseHtml(orders, shop, notesOf)
-      await api.printBulk({ type: doc.type, widthMm: doc.widthMm, heightMm: doc.heightMm, landscape: doc.landscape, html: doc.html })
-      setBulkResult({
-        ok: true,
-        message: `درخواست چاپ گروهی ${faNum(orders.length)} سفارش ارسال شد (${faNum(doc.pages)} ${doc.type === 'store' ? 'بخش روی نوار' : 'برگهٔ A4'}).`,
-      })
+      setBulkDoc(doc)
     } catch (e) {
       setBulkPrintError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -289,7 +286,6 @@ export default function OrdersView({ configured, conn, storeName, onGoSettings }
                   type="button"
                   className="btn btn-sm btn-primary"
                   onClick={(e) => {
-                    setBulkResult(null)
                     setBulkPrintError(null)
                     const r = e.currentTarget.getBoundingClientRect()
                     setBulkPrintPos({ top: r.bottom + 6, right: window.innerWidth - r.right })
@@ -441,12 +437,8 @@ export default function OrdersView({ configured, conn, storeName, onGoSettings }
               <div style={{ flex: 1 }}>{bulkPrintError}</div>
             </div>
           )}
-          {bulkResult && (
-            <div className="notice ok" style={{ margin: '0 16px 8px' }}>
-              <IconCheck size={15} />
-              <div style={{ flex: 1 }}>{bulkResult.message}</div>
-            </div>
-          )}
+
+          {bulkDoc && <BulkPrintModal doc={bulkDoc} onClose={() => setBulkDoc(null)} />}
 
           {bulkStatus && selectedIds.size > 0 && (
             <OrderStatusModal
