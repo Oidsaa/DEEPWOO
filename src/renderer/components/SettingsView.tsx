@@ -7,6 +7,7 @@ import {
   IconEye,
   IconEyeOff,
   IconLink,
+  IconNote,
   IconPrint,
   IconRefresh,
   IconShield,
@@ -424,6 +425,58 @@ export default function SettingsView({ settings, conn, onSaved }: Props) {
                 value={form.storePhone ?? ''}
                 onChange={(e) => set('storePhone', e.target.value)}
               />
+            </div>
+
+            <div className="form-actions">
+              <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving}>
+                {saving ? <IconRefresh size={16} className="spin" /> : <IconCheck size={16} />}
+                {saving ? 'در حال ذخیره…' : 'ذخیره تنظیمات'}
+              </button>
+              {savedFlash && (
+                <span className="save-msg">
+                  <IconCheck size={14} />
+                  ذخیره شد
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="panel" style={{ gridColumn: '1 / -1' }}>
+          <div className="panel-head">
+            <div>
+              <div className="panel-title">تنظیمات یادداشت سفارش</div>
+              <div className="panel-sub">
+                یادداشت‌های رسید انبارداری — هر یادداشتی که شامل یکی از این جملات باشد، چاپ نمی‌شود
+              </div>
+            </div>
+            <div className="chip">
+              <IconNote size={13} />
+              رسید انبارداری
+            </div>
+          </div>
+
+          <div className="form-body">
+            <div className="field">
+              <label className="lbl" htmlFor="noteExclusions">
+                جملات حذف‌شده از یادداشت‌ها
+              </label>
+              <textarea
+                id="noteExclusions"
+                className="input"
+                rows={7}
+                placeholder={'هر جمله در یک خط؛ مثلاً:\nلطفاً پیش از ارسال تماس بگیرید\nمتن یادداشت تبلیغاتی'}
+                // Keep empty lines while editing so Enter/Shift+Enter moves to the
+                // next line naturally; trimming/cleanup happens on save.
+                value={(form.noteExclusions ?? []).join('\n')}
+                onChange={(e) =>
+                  set('noteExclusions', e.target.value.split(/\r?\n/).map((p) => p.trim()))
+                }
+              />
+              <span className="f-hint">
+                یادداشت مدیر فروشگاه و یادداشت مشتری که شامل هرکدام از این جملات باشد، روی رسید انبارداری نمایش داده
+                نمی‌شود. یادداشت‌های سیستمی به‌هرحال چاپ نمی‌شوند. برای اعمال، «ذخیره تنظیمات» را بزنید.
+              </span>
             </div>
 
             <div className="form-actions">

@@ -1,6 +1,7 @@
+import { useEffect, useState } from 'react'
 import type { ConnState, ViewId } from '../../shared/types'
-import { isMock } from '../api'
-import { faDigits } from '../lib/format'
+import { api, isMock } from '../api'
+import { faDigits, faNum } from '../lib/format'
 import { IconBag, IconBox, IconGear, IconStore, IconUsers } from './Icons'
 
 interface Props {
@@ -13,6 +14,30 @@ interface Props {
 }
 
 export default function Sidebar({ view, configured, host, conn, storeName, onNavigate }: Props) {
+  // سفارش‌های در حال پردازش (processing) — badge کنار منوی سفارش‌ها.
+  const [processingCount, setProcessingCount] = useState<number | null>(null)
+
+  useEffect(() => {
+    if (!configured) {
+      setProcessingCount(null)
+      return
+    }
+    let cancelled = false
+    api
+      .listOrderStatusTotals()
+      .then((list) => {
+        if (!cancelled) setProcessingCount(list.find((s) => s.slug === 'processing')?.total ?? 0)
+      })
+      .catch(() => {
+        if (!cancelled) setProcessingCount(null)
+      })
+    return () => {
+      cancelled = true
+    }
+    // Re-fetch when navigating to سفارش‌ها (a status change may have happened there)
+    // and when the connection state settles.
+  }, [configured, view, conn.state])
+
   return (
     <aside className="sidebar">
       <div className="sb-brand">
@@ -42,6 +67,7 @@ export default function Sidebar({ view, configured, host, conn, storeName, onNav
         >
           <IconBag size={18} />
           <span>سفارش‌ها</span>
+          {processingCount !== null && <span className="sb-badge">{faNum(processingCount)}</span>}
         </button>
         <button
           type="button"

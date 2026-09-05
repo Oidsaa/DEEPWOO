@@ -881,6 +881,8 @@ export const mockApi: ApiBridge = {
           (o.billing?.phone ?? '').toLowerCase().includes(search),
       )
     }
+    const status = (query.status ?? '').trim()
+    if (status) list = list.filter((o) => o.status === status)
     const perPage = Math.min(100, Math.max(1, query.perPage ?? 50))
     const page = Math.max(1, query.page ?? 1)
     const start = (page - 1) * perPage
@@ -891,6 +893,20 @@ export const mockApi: ApiBridge = {
       page,
       perPage,
     }
+  },
+  async listOrderStatusTotals() {
+    await delay(450)
+    if (!isDemoSettings(storedSettings())) throw new Error(NOT_REAL_MSG)
+    const counts = new Map<string, number>()
+    for (const o of allOrders()) counts.set(o.status, (counts.get(o.status) ?? 0) + 1)
+    // WooCommerce-like ordering: built-in statuses first, then custom ones.
+    const builtIn = ['pending', 'processing', 'on-hold', 'completed', 'cancelled', 'refunded', 'failed']
+    const custom = [...counts.keys()].filter((k) => !builtIn.includes(k)).sort()
+    return [...builtIn.filter((k) => counts.has(k)), ...custom].map((slug) => ({
+      slug,
+      name: slug,
+      total: counts.get(slug) ?? 0,
+    }))
   },
   async listOrderNotes(orderId: number): Promise<OrderNote[]> {
     await delay(450)

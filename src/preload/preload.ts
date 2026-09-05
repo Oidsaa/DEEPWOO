@@ -21,6 +21,7 @@ const api: ApiBridge = {
   createCustomer: (payload: CustomerPayload) => ipcRenderer.invoke('wc:create-customer', payload),
   listCustomerOrders: (customerId: number) => ipcRenderer.invoke('wc:customer-orders', customerId),
   listOrders: (query: ListOrdersQuery) => ipcRenderer.invoke('wc:orders', query),
+  listOrderStatusTotals: () => ipcRenderer.invoke('wc:order-status-totals'),
   listOrderNotes: (orderId: number) => ipcRenderer.invoke('wc:order-notes', orderId),
   createOrderNote: (orderId: number, payload: OrderNotePayload) =>
     ipcRenderer.invoke('wc:order-note-create', orderId, payload),

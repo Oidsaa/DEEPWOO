@@ -21,6 +21,11 @@ export interface ReceiptShop {
   postcode?: string
   phone?: string
   logo?: string
+  /**
+   * Phrases (from «تنظیمات یادداشت سفارش») — an order note whose text contains
+   * any of them is hidden on the warehouse receipt (admin AND customer notes).
+   */
+  noteExclusions?: string[]
 }
 
 const mm = (n: number): number => Math.round(n * 10) / 10
@@ -265,8 +270,9 @@ export function postalReceiptHtml(order: Order, shop: ReceiptShop): ReceiptDoc {
   </div>
   <style>
     .sheet.postal { display: flex; gap: 2mm; padding: 2.4mm 3mm; font-size: 9px; color: #000; }
+    /* کادر راه‌راه: آبی ← سفید ← قرمز ← سفید، و همین لوپ تکرار می‌شود. */
     .air { flex: 1 1 0; min-width: 0; padding: 1.3mm;
-      background: repeating-linear-gradient(45deg, #b91c1c 0 2.3mm, #1e50c0 2.3mm 4.6mm); }
+      background: repeating-linear-gradient(45deg, #1e50c0 0 2.3mm, #fff 2.3mm 4.6mm, #b91c1c 4.6mm 6.9mm, #fff 6.9mm 9.2mm); }
     .air-in { background: #fff; height: 100%; box-sizing: border-box; padding: 1.7mm 2.4mm;
       display: flex; flex-direction: column; justify-content: center; gap: 0.5mm; text-align: right; }
     .h-label { font-size: 10px; font-weight: 900; margin-bottom: 0.4mm; }
@@ -300,35 +306,54 @@ function estLines(text: string, perLine = 24): number {
  * flagged `added_by_user: false`, or written by system authors, or system
  * status-change narrations even when the API sends inconsistent flags.
  */
-export function filterPrintableNotes(notes: OrderNote[]): OrderNote[] {
+/**
+ * True when a note text contains one of the shop's excluded phrases
+ * (case-insensitive) — such notes are never printed on the warehouse receipt.
+ */
+export function excludedNoteText(text: string, exclusions: string[] = []): boolean {
+  const t = String(text || '').toLowerCase()
+  return exclusions.some((p) => {
+    const phrase = String(p || '').trim().toLowerCase()
+    return phrase !== '' && t.includes(phrase)
+  })
+}
+
+export function filterPrintableNotes(notes: OrderNote[], exclusions: string[] = []): OrderNote[] {
   // High-specificity system narrations only — deliberately NOT generic
   // phrases a human manager might legitimately write (e.g. «پرداخت تأیید شد»).
   const SYSTEM_RE = /(وضعیت سفارش از.+به.+تغییر کرد|سفارش ایجاد شد|بروزرسانی وضعیت سفارش|order status changed|status changed to|payment complete|order created)/i
   const SYSTEM_AUTHOR_RE = /^(woocommerce|system|ووکامرس|سیستم)$/i
   return notes.filter((n) => {
-    if (n.customer_note) return true // customer notes always shown
+    if (excludedNoteText(n.note, exclusions)) return false // shop-managed exclusion
+    if (n.customer_note) return true // customer notes always shown (unless excluded above)
     if (SYSTEM_AUTHOR_RE.test((n.author || '').trim())) return false
     if (n.added_by_user === false) return false
     return !SYSTEM_RE.test(n.note || '')
   })
 }
 
-export function warehouseReceiptHtml(order: Order, _shop: ReceiptShop, notes: OrderNote[] = []): ReceiptDoc {
+export function warehouseReceiptHtml(order: Order, shop: ReceiptShop, notes: OrderNote[] = []): ReceiptDoc {
   const rows = lineRows(order)
   const w = 100
   const ship = deliveryAddress(order)
   const addrFull = faAddress(ship.state, ship.city, ship.addr)
   const t = totalsOf(order)
+  const exclusions = shop.noteExclusions ?? []
 
   // یادداشت مدیر = نوشتهٔ یک ادمین (غیرسیستم و غیرمشتری)؛ یادداشت مشتری =
   // علامت‌گذاری‌شده برای مشتری + یادداشت ثبت‌شده هنگام خرید (order.customer_note)
   // که در فروشگاه‌های واقعی ممکن است فقط در همین فیلد نگهداری شود.
   // یادداشت‌های سیستمی (WooCommerce/درگاه‌ها؛ added_by_user=false) هرگز نمایش
   // داده نمی‌شوند — حتی وقتی فلگ‌های ناسازگار از API می‌آیند.
-  const adminNotes = filterPrintableNotes(notes)
+  // جملات واردشده در «تنظیمات یادداشت سفارش» هم روی هر دو نوع یادداشت اعمال می‌شوند.
+  const adminNotes = filterPrintableNotes(notes, exclusions)
   const checkoutNote = (order.customer_note || '').trim()
-  const customerNotes = notes.filter((n) => n.customer_note)
-  if (checkoutNote && !customerNotes.some((n) => n.note === checkoutNote)) {
+  const customerNotes = notes.filter((n) => n.customer_note && !excludedNoteText(n.note, exclusions))
+  if (
+    checkoutNote &&
+    !excludedNoteText(checkoutNote, exclusions) &&
+    !customerNotes.some((n) => n.note === checkoutNote)
+  ) {
     customerNotes.push({
       id: -1,
       author: 'مشتری',
@@ -582,7 +607,9 @@ export function bulkWarehouseHtml(
   notesOf: (orderId: number) => OrderNote[],
 ): BulkReceiptDoc {
   const GAP_X = 10 // 2 × 100mm columns + 10mm gutter = 210mm A4 width
-  const GAP_Y = 3
+  // فاصلهٔ عمودی بین سطرها: ۳ میلی‌متر بود؛ با احتساب پدینگ داخلی برچسب‌ها
+  // (~۵ میلی‌متر) نوار سفید دیده‌شده ≈ ۰٫۸ سانتی‌متر بود → حالا ≈ ۰٫۶ سانتی‌متر.
+  const GAP_Y = 1.5
 
   // RTL pairing: first order of each pair lands in the RIGHT column.
   const pairs: Array<{ a: Order; b: Order | null; h: number }> = []

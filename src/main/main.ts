@@ -7,6 +7,7 @@ import {
   createCustomer,
   listCustomerOrders,
   listOrders,
+  listOrderStatusTotals,
   listOrderNotes,
   createOrderNote,
   updateOrderStatus,
@@ -211,6 +212,18 @@ function registerIpc(): void {
     }
     try {
       return await listOrders(cfg, query ?? {})
+    } catch (err) {
+      throw new Error(err instanceof Error ? err.message : String(err))
+    }
+  })
+
+  ipcMain.handle('wc:order-status-totals', async () => {
+    const cfg = getSettings()
+    if (!cfg.siteUrl || !cfg.consumerKey || !cfg.consumerSecret) {
+      return []
+    }
+    try {
+      return await listOrderStatusTotals(cfg)
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
     }

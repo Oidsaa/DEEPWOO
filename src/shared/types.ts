@@ -10,6 +10,11 @@ export interface Settings {
   storePhone?: string
   /** Store logo as a data URL (read from a local image file). */
   storeLogo?: string
+  /**
+   * Phrases (one per entry) whose containing order notes are NOT printed on
+   * the warehouse receipt — each shop manages its own excluded note texts.
+   */
+  noteExclusions?: string[]
 }
 
 /** Minimal shape of a WooCommerce customer (/wp-json/wc/v3/customers). */
@@ -262,10 +267,20 @@ export interface PrintBulkDoc {
 
 export interface ListOrdersQuery {
   search?: string
+  /** Single order status to filter by; omit/empty for every non-trash status. */
+  status?: string
   page?: number
   perPage?: number
   /** Only these order ids (bulk print fetch — respects WooCommerce `include`). */
   include?: number[]
+}
+
+/** One row of GET /wp-json/wc/v3/reports/orders/totals. */
+export interface OrderStatusTotal {
+  slug: string
+  /** WooCommerce's own name (often English — the UI shows the Persian label). */
+  name: string
+  total: number
 }
 
 /** One order note (GET/POST /wp-json/wc/v3/orders/{id}/notes). */
@@ -349,6 +364,8 @@ export interface ApiBridge {
   createCustomer(payload: CustomerPayload): Promise<Customer>
   listCustomerOrders(customerId: number): Promise<OrdersResult>
   listOrders(query: ListOrdersQuery): Promise<OrdersListResult>
+  /** Order counts per status (drives the sidebar badge + the orders filter chips). */
+  listOrderStatusTotals(): Promise<OrderStatusTotal[]>
   listOrderNotes(orderId: number): Promise<OrderNote[]>
   createOrderNote(orderId: number, payload: OrderNotePayload): Promise<OrderNote>
   updateOrderStatus(orderId: number, status: string): Promise<Order>

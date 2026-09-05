@@ -22,6 +22,9 @@ export function getSettings(): Settings {
       storePostcode: typeof data.storePostcode === 'string' ? data.storePostcode : undefined,
       storePhone: typeof data.storePhone === 'string' ? data.storePhone : undefined,
       storeLogo: typeof data.storeLogo === 'string' ? data.storeLogo : undefined,
+      noteExclusions: Array.isArray(data.noteExclusions)
+        ? (data.noteExclusions as unknown[]).filter((x): x is string => typeof x === 'string')
+        : undefined,
     }
   } catch {
     return { ...EMPTY }
@@ -52,6 +55,8 @@ export function sanitizeSettings(input: Settings): Settings {
     storePostcode: (input.storePostcode ?? '').trim() || undefined,
     storePhone: (input.storePhone ?? '').trim() || undefined,
     storeLogo: (input.storeLogo ?? '').trim() || undefined,
+    // One phrase per line from the settings textarea: trimmed, non-empty, deduped.
+    noteExclusions: [...new Set((input.noteExclusions ?? []).map((p) => p.trim()).filter(Boolean))],
   }
 }
 

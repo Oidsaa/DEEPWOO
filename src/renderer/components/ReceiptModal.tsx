@@ -45,6 +45,7 @@ export default function ReceiptModal({ order, initialType = 'store', onClose }: 
           postcode: s.storePostcode,
           phone: s.storePhone,
           logo: s.storeLogo,
+          noteExclusions: s.noteExclusions,
         })
       })
       .catch(() => {

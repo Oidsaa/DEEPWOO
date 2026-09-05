@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { MouseEvent as ReactMouseEvent } from 'react'
-import type { ConnState, Order, OrderNote, OrdersListResult, ReceiptType } from '../../shared/types'
+import type { ConnState, Order, OrderNote, OrdersListResult, OrderStatusTotal, ReceiptType } from '../../shared/types'
 import { api, isMock } from '../api'
 import { avatarPalette, faDate, faDigits, faNum, faTime, orderStatusMeta } from '../lib/format'
 import { bulkPostalHtml, bulkStoreHtml, bulkWarehouseHtml, RECEIPT_KINDS, type BulkReceiptDoc, type ReceiptShop } from '../lib/print'
@@ -34,11 +34,13 @@ interface Props {
 
 export default function OrdersView({ configured, conn, storeName, onGoSettings }: Props) {
   const [searchInput, setSearchInput] = useState('')
-  const [params, setParams] = useState({ search: '', page: 1, perPage: 50 })
+  const [params, setParams] = useState({ search: '', status: '', page: 1, perPage: 50 })
   const [data, setData] = useState<OrdersListResult | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [loadCount, setLoadCount] = useState(0)
+  /** تعداد سفارش‌های هر وضعیت (چیپ‌های فیلتر هدر). */
+  const [statusTotals, setStatusTotals] = useState<OrderStatusTotal[] | null>(null)
   const debounceRef = useRef<number | undefined>(undefined)
   /** Order ids selected across pages (the first column). */
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
@@ -95,6 +97,7 @@ export default function OrdersView({ configured, conn, storeName, onGoSettings }
         postcode: s.storePostcode,
         phone: s.storePhone,
         logo: s.storeLogo,
+        noteExclusions: s.noteExclusions,
       }
       let doc: BulkReceiptDoc
       if (type === 'store') doc = bulkStoreHtml(orders, shop)
@@ -124,7 +127,12 @@ export default function OrdersView({ configured, conn, storeName, onGoSettings }
     setLoading(true)
     setError(null)
     api
-      .listOrders({ search: params.search, page: params.page, perPage: params.perPage })
+      .listOrders({
+        search: params.search,
+        status: params.status || undefined,
+        page: params.page,
+        perPage: params.perPage,
+      })
       .then((r) => {
         if (!cancelled) setData(r)
       })
@@ -140,7 +148,27 @@ export default function OrdersView({ configured, conn, storeName, onGoSettings }
     return () => {
       cancelled = true
     }
-  }, [configured, params.search, params.page, params.perPage, loadCount])
+  }, [configured, params.search, params.status, params.page, params.perPage, loadCount])
+
+  // Status totals for the header filter chips (همهٔ سفارش‌ها + هر وضعیت).
+  useEffect(() => {
+    if (!configured) {
+      setStatusTotals(null)
+      return
+    }
+    let cancelled = false
+    api
+      .listOrderStatusTotals()
+      .then((list) => {
+        if (!cancelled) setStatusTotals(list)
+      })
+      .catch(() => {
+        if (!cancelled) setStatusTotals(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [configured, loadCount])
 
   const onSearchChange = (value: string) => {
     setSearchInput(value)
@@ -190,6 +218,34 @@ export default function OrdersView({ configured, conn, storeName, onGoSettings }
             )}
           </div>
           <div className="page-sub">سفارشات فروشگاه «{storeName ?? 'ووکامرس'}»</div>
+          {configured && statusTotals && statusTotals.length > 0 && (
+            <div className="os-chips">
+              <button
+                type="button"
+                className={'os-chip' + (params.status === '' ? ' active' : '')}
+                onClick={() => setParams((p) => ({ ...p, status: '', page: 1 }))}
+              >
+                <span>همهٔ سفارش‌ها</span>
+                <span className="os-chip-count">{faNum(statusTotals.reduce((a, s) => a + s.total, 0))}</span>
+              </button>
+              {statusTotals
+                .filter((s) => s.total > 0) // وضعیت‌های بدون سفارش نمایش داده نمی‌شوند
+                .map((s) => {
+                  const meta = orderStatusMeta(s.slug)
+                  return (
+                    <button
+                      key={s.slug}
+                      type="button"
+                      className={'os-chip' + (params.status === s.slug ? ' active' : '')}
+                      onClick={() => setParams((p) => ({ ...p, status: s.slug, page: 1 }))}
+                    >
+                      <span>{meta.fa}</span>
+                      <span className="os-chip-count">{faNum(s.total)}</span>
+                    </button>
+                  )
+                })}
+            </div>
+          )}
         </div>
       </div>
 

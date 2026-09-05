@@ -10,6 +10,7 @@ import type {
   OrderNotePayload,
   OrdersListResult,
   OrdersResult,
+  OrderStatusTotal,
   Product,
   ProductDetail,
   ProductOrdersResult,
@@ -465,6 +466,8 @@ export async function listOrders(cfg: WooConfig, query: ListOrdersQuery): Promis
   }
   const search = (query.search ?? '').trim()
   if (search) params.search = search
+  const status = (query.status ?? '').trim()
+  if (status) params.status = status
 
   const { data, headers } = await wooRequest<Order[]>(cfg, 'GET', '/orders', params)
   const orders = await Promise.all(data.map(async (o) => ({ ...o, customer_name: await customerNameOf(cfg, o) })))
@@ -475,6 +478,27 @@ export async function listOrders(cfg: WooConfig, query: ListOrdersQuery): Promis
     page,
     perPage,
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Order status totals (تعداد سفارش‌های هر وضعیت)                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Order counts per status (GET /reports/orders/totals). Used for the
+ * sidebar's in-progress badge and the orders-page filter chips. The trash
+ * status is dropped because the orders list never shows it.
+ */
+export async function listOrderStatusTotals(cfg: WooConfig): Promise<OrderStatusTotal[]> {
+  const { data } = await wooRequest<Array<{ slug?: string; name?: string; total?: string | number }>>(
+    cfg,
+    'GET',
+    '/reports/orders/totals',
+    {},
+  )
+  return (data ?? [])
+    .filter((s) => !!s.slug && s.slug !== 'trash')
+    .map((s) => ({ slug: s.slug as string, name: s.name ?? (s.slug as string), total: Number(s.total) || 0 }))
 }
 
 /* ------------------------------------------------------------------ */
