@@ -996,6 +996,14 @@ export default function ReportsView({ configured, conn, storeName, onGoSettings 
     [configured],
   )
 
+  /** دکمهٔ «به‌روزرسانی»: کش را پاک می‌کند تا گزارش واقعاً از نو از فروشگاه خوانده شود. */
+  const refreshReport = useCallback(
+    (sel: PeriodSel) => {
+      void api.clearCache().finally(() => void runReport(sel))
+    },
+    [runReport],
+  )
+
   useEffect(() => {
     void runReport(period)
   }, [period, runReport])
@@ -1192,7 +1200,7 @@ export default function ReportsView({ configured, conn, storeName, onGoSettings 
           <button
             type="button"
             className="btn btn-ghost btn-sm"
-            onClick={() => void runReport(period)}
+            onClick={() => void refreshReport(period)}
             disabled={loading}
             title="بارگذاری مجدد گزارش"
           >
@@ -1210,7 +1218,7 @@ export default function ReportsView({ configured, conn, storeName, onGoSettings 
         <div className="notice err fade-in">
           <IconAlert size={15} />
           <div style={{ flex: 1 }}>{error}</div>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => void runReport(period)}>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => void refreshReport(period)}>
             تلاش دوباره
           </button>
         </div>

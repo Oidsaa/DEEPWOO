@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import path from 'node:path'
 import { getSettings, saveSettings, clearSettings, sanitizeSettings } from './settings'
+import { cachedRun, clearCaches, bumpCacheVersion } from './cache'
 import {
   testConnection,
   listCustomers,
@@ -118,17 +119,33 @@ async function printViaDialog(doc: PrintableDoc): Promise<{ ok: boolean }> {
   }
 }
 
+/** Cache TTLs (ms) per endpoint weight — see cache.ts. */
+const TTL = { list: 60_000, heavy: 120_000, scan: 300_000, detail: 300_000, notes: 120_000, stats: 120_000 } as const
+
+/** Stable cache key for one IPC read (endpoint + serialized arguments). */
+const ck = (prefix: string, ...parts: unknown[]): string => prefix + ':' + JSON.stringify(parts)
+
 function registerIpc(): void {
   ipcMain.handle('settings:get', () => getSettings())
 
   ipcMain.handle('settings:save', (_event, raw: Settings) => {
     const settings = sanitizeSettings(raw)
     saveSettings(settings)
+    // تنظیمات روی گزارش‌ها/هزینه‌ها اثر می‌گذارد — کش بعدی باید تازه باشد.
+    bumpCacheVersion()
     return { ok: true }
   })
 
   ipcMain.handle('settings:clear', () => {
     clearSettings()
+    bumpCacheVersion()
+    return { ok: true }
+  })
+
+  // دکمه‌های «به‌روزرسانی» در UI این را صدا می‌زنند تا داده از نو همگام شود.
+  ipcMain.handle('cache:clear', () => {
+    clearCaches()
+    bumpCacheVersion()
     return { ok: true }
   })
 
@@ -156,7 +173,8 @@ function registerIpc(): void {
       throw new Error('تنظیمات API کامل نشده است.')
     }
     try {
-      return await listCustomers(cfg, query ?? {})
+      const q = query ?? {}
+      return await cachedRun(ck('customers', q), TTL.list, () => listCustomers(cfg, q))
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
     }
@@ -168,7 +186,9 @@ function registerIpc(): void {
       throw new Error('تنظیمات API کامل نشده است.')
     }
     try {
-      return await createCustomer(cfg, payload ?? {})
+      const result = await createCustomer(cfg, payload ?? {})
+      bumpCacheVersion()
+      return result
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
     }
@@ -180,7 +200,9 @@ function registerIpc(): void {
       throw new Error('تنظیمات API کامل نشده است.')
     }
     try {
-      return await createOrder(cfg, payload ?? { line_items: [] })
+      const result = await createOrder(cfg, payload ?? { line_items: [] })
+      bumpCacheVersion()
+      return result
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
     }
@@ -192,7 +214,8 @@ function registerIpc(): void {
       throw new Error('تنظیمات API کامل نشده است.')
     }
     try {
-      return await getSalesReports(cfg, query ?? { days: 30 }, cfg.productCosts)
+      const q = query ?? { days: 30 }
+      return await cachedRun(ck('reports', q), TTL.scan, () => getSalesReports(cfg, q, cfg.productCosts))
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
     }
@@ -204,7 +227,7 @@ function registerIpc(): void {
       throw new Error('تنظیمات API کامل نشده است.')
     }
     try {
-      return await getStoreStats(cfg)
+      return await cachedRun('store-stats', TTL.stats, () => getStoreStats(cfg))
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
     }
@@ -216,7 +239,8 @@ function registerIpc(): void {
       throw new Error('تنظیمات API کامل نشده است.')
     }
     try {
-      return await listProducts(cfg, query ?? {})
+      const q = query ?? {}
+      return await cachedRun(ck('products', q), TTL.list, () => listProducts(cfg, q))
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
     }
@@ -228,7 +252,7 @@ function registerIpc(): void {
       throw new Error('تنظیمات API کامل نشده است.')
     }
     try {
-      return await getProductCatalog(cfg)
+      return await cachedRun('product-catalog', TTL.detail, () => getProductCatalog(cfg))
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
     }
@@ -240,7 +264,7 @@ function registerIpc(): void {
       throw new Error('تنظیمات API کامل نشده است.')
     }
     try {
-      return await listCustomerOrders(cfg, customerId)
+      return await cachedRun(ck('customer-orders', customerId), TTL.heavy, () => listCustomerOrders(cfg, customerId))
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
     }
@@ -252,7 +276,8 @@ function registerIpc(): void {
       throw new Error('تنظیمات API کامل نشده است.')
     }
     try {
-      return await listOrders(cfg, query ?? {})
+      const q = query ?? {}
+      return await cachedRun(ck('orders', q), TTL.list, () => listOrders(cfg, q))
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
     }
@@ -264,7 +289,7 @@ function registerIpc(): void {
       return []
     }
     try {
-      return await listOrderStatusTotals(cfg)
+      return await cachedRun('order-status-totals', TTL.list, () => listOrderStatusTotals(cfg))
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
     }
@@ -276,7 +301,7 @@ function registerIpc(): void {
       throw new Error('تنظیمات API کامل نشده است.')
     }
     try {
-      return await listOrderNotes(cfg, orderId)
+      return await cachedRun(ck('notes', orderId), TTL.notes, () => listOrderNotes(cfg, orderId))
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
     }
@@ -288,7 +313,9 @@ function registerIpc(): void {
       throw new Error('تنظیمات API کامل نشده است.')
     }
     try {
-      return await createOrderNote(cfg, orderId, payload ?? {})
+      const result = await createOrderNote(cfg, orderId, payload ?? {})
+      bumpCacheVersion()
+      return result
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
     }
@@ -300,7 +327,9 @@ function registerIpc(): void {
       throw new Error('تنظیمات API کامل نشده است.')
     }
     try {
-      return await updateOrderStatus(cfg, orderId, status)
+      const result = await updateOrderStatus(cfg, orderId, status)
+      bumpCacheVersion()
+      return result
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
     }
@@ -312,7 +341,7 @@ function registerIpc(): void {
       throw new Error('تنظیمات API کامل نشده است.')
     }
     try {
-      return await getProductDetail(cfg, productId)
+      return await cachedRun(ck('product-detail', productId), TTL.detail, () => getProductDetail(cfg, productId))
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
     }
@@ -324,7 +353,9 @@ function registerIpc(): void {
       throw new Error('تنظیمات API کامل نشده است.')
     }
     try {
-      return await updateProductVariation(cfg, productId, variationId, patch ?? {})
+      const result = await updateProductVariation(cfg, productId, variationId, patch ?? {})
+      bumpCacheVersion()
+      return result
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
     }
@@ -336,7 +367,9 @@ function registerIpc(): void {
       throw new Error('تنظیمات API کامل نشده است.')
     }
     try {
-      return await updateProduct(cfg, productId, patch ?? {})
+      const result = await updateProduct(cfg, productId, patch ?? {})
+      bumpCacheVersion()
+      return result
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
     }
@@ -348,7 +381,9 @@ function registerIpc(): void {
       throw new Error('تنظیمات API کامل نشده است.')
     }
     try {
-      return await createProduct(cfg, payload ?? {})
+      const result = await createProduct(cfg, payload ?? {})
+      bumpCacheVersion()
+      return result
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
     }
@@ -374,7 +409,7 @@ function registerIpc(): void {
       throw new Error('تنظیمات API کامل نشده است.')
     }
     try {
-      return await listProductOrders(cfg, productId)
+      return await cachedRun(ck('product-orders', productId), TTL.heavy, () => listProductOrders(cfg, productId))
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
     }

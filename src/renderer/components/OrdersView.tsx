@@ -4,6 +4,7 @@ import type { MouseEvent as ReactMouseEvent } from 'react'
 import type { ConnState, Order, OrderNote, OrdersListResult, OrderStatusTotal, ReceiptType } from '../../shared/types'
 import { api, isMock } from '../api'
 import { avatarPalette, faDate, faDigits, faNum, faTime, orderStatusMeta } from '../lib/format'
+import { forceRefresh } from '../lib/refresh'
 import { bulkPostalHtml, bulkStoreHtml, bulkWarehouseHtml, RECEIPT_KINDS, type BulkReceiptDoc, type ReceiptShop } from '../lib/print'
 import BulkPrintModal from './BulkPrintModal'
 import {
@@ -253,7 +254,7 @@ export default function OrdersView({ configured, conn, storeName, onGoSettings }
         <div className="notice err">
           <IconAlert size={17} />
           <div style={{ flex: 1 }}>{conn.message}</div>
-          <button type="button" className="btn btn-sm btn-ghost" onClick={() => setLoadCount((n) => n + 1)}>
+          <button type="button" className="btn btn-sm btn-ghost" onClick={() => forceRefresh(setLoadCount)}>
             تلاش دوباره
           </button>
         </div>
@@ -320,7 +321,7 @@ export default function OrdersView({ configured, conn, storeName, onGoSettings }
                 type="button"
                 className="btn-icon"
                 title="بارگذاری مجدد"
-                onClick={() => setLoadCount((n) => n + 1)}
+                onClick={() => forceRefresh(setLoadCount)}
               >
                 <IconRefresh size={15} className={loading ? 'spin' : ''} />
               </button>
@@ -401,7 +402,7 @@ export default function OrdersView({ configured, conn, storeName, onGoSettings }
               <div className="empty-title">دریافت سفارش‌ها ناموفق بود</div>
               <div className="empty-sub">{error}</div>
               <div className="empty-action">
-                <button type="button" className="btn btn-ghost" onClick={() => setLoadCount((n) => n + 1)}>
+                <button type="button" className="btn btn-ghost" onClick={() => forceRefresh(setLoadCount)}>
                   <IconRefresh size={15} />
                   تلاش دوباره
                 </button>
@@ -482,7 +483,7 @@ export default function OrdersView({ configured, conn, storeName, onGoSettings }
               onClose={() => setStatusOrder(null)}
               onChanged={() => {
                 setStatusOrder(null)
-                setLoadCount((n) => n + 1)
+                forceRefresh(setLoadCount)
               }}
             />
           )}
@@ -502,7 +503,7 @@ export default function OrdersView({ configured, conn, storeName, onGoSettings }
               onClose={() => setBulkStatus(false)}
               onChanged={() => {
                 setSelectedIds(new Set())
-                setLoadCount((n) => n + 1)
+                forceRefresh(setLoadCount)
               }}
             />
           )}

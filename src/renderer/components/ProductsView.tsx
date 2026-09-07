@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import type { ConnState, Product, ProductsResult } from '../../shared/types'
 import { api, isMock } from '../api'
 import { avatarPalette, faDate, faDigits, faNum } from '../lib/format'
+import { forceRefresh } from '../lib/refresh'
 import AddProductModal from './AddProductModal'
 import BulkPriceModal from './BulkPriceModal'
 import BulkStockModal from './BulkStockModal'
@@ -147,7 +148,7 @@ export default function ProductsView({ configured, conn, storeName, onGoSettings
     setSearchInput('')
     window.clearTimeout(debounceRef.current)
     setParams((p) => ({ ...p, search: '', page: 1 }))
-    setLoadCount((n) => n + 1)
+    forceRefresh(setLoadCount)
   }
 
   const onSearchChange = (value: string) => {
@@ -203,7 +204,7 @@ export default function ProductsView({ configured, conn, storeName, onGoSettings
         <div className="notice err">
           <IconAlert size={17} />
           <div style={{ flex: 1 }}>{conn.message}</div>
-          <button type="button" className="btn btn-sm btn-ghost" onClick={() => setLoadCount((n) => n + 1)}>
+          <button type="button" className="btn btn-sm btn-ghost" onClick={() => forceRefresh(setLoadCount)}>
             تلاش دوباره
           </button>
         </div>
@@ -334,7 +335,7 @@ export default function ProductsView({ configured, conn, storeName, onGoSettings
                   type="button"
                   className="btn-icon"
                   title="بارگذاری مجدد"
-                  onClick={() => setLoadCount((n) => n + 1)}
+                  onClick={() => forceRefresh(setLoadCount)}
                 >
                   <IconRefresh size={15} className={loading ? 'spin' : ''} />
                 </button>
@@ -349,7 +350,7 @@ export default function ProductsView({ configured, conn, storeName, onGoSettings
                 <div className="empty-title">دریافت محصولات ناموفق بود</div>
                 <div className="empty-sub">{error}</div>
                 <div className="empty-action">
-                  <button type="button" className="btn btn-ghost" onClick={() => setLoadCount((n) => n + 1)}>
+                  <button type="button" className="btn btn-ghost" onClick={() => forceRefresh(setLoadCount)}>
                     <IconRefresh size={15} />
                     تلاش دوباره
                   </button>
@@ -462,7 +463,7 @@ export default function ProductsView({ configured, conn, storeName, onGoSettings
           productId={detailProduct.id}
           productName={detailProduct.name}
           onClose={() => setDetailProduct(null)}
-          onChanged={() => setLoadCount((n) => n + 1)}
+          onChanged={() => forceRefresh(setLoadCount)}
         />
       )}
 
@@ -474,7 +475,7 @@ export default function ProductsView({ configured, conn, storeName, onGoSettings
         <BulkPriceModal
           product={bulkPriceProduct}
           onClose={() => setBulkPriceProduct(null)}
-          onChanged={() => setLoadCount((n) => n + 1)}
+          onChanged={() => forceRefresh(setLoadCount)}
         />
       )}
 
@@ -482,7 +483,7 @@ export default function ProductsView({ configured, conn, storeName, onGoSettings
         <BulkStockModal
           product={bulkStockProduct}
           onClose={() => setBulkStockProduct(null)}
-          onChanged={() => setLoadCount((n) => n + 1)}
+          onChanged={() => forceRefresh(setLoadCount)}
         />
       )}
     </div>

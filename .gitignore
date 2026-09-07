@@ -13,3 +13,6 @@ electron-dist-local/
 .freebuff/
 .app-run.pid
 *.err
+
+# Visual Studio local state
+.vs/

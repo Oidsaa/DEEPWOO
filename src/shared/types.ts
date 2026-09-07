@@ -427,6 +427,12 @@ export interface ApiBridge {
   createCustomer(payload: CustomerPayload): Promise<Customer>
   /** Create an order (quick registration). Requires a Read/Write API key. */
   createOrder(payload: OrderPayload): Promise<Order>
+  /**
+   * Drop every cached store response (desktop cache + demo rebuild). Called by
+   * the «به‌روزرسانی» / «بارگذاری مجدد» buttons so the next read refetches
+   * from the store instead of serving the TTL cache.
+   */
+  clearCache(): Promise<{ ok: boolean }>
   /** Sales report over the last N days (store analytics). */
   getReports(query: ReportsQuery): Promise<SalesReport>
   listCustomerOrders(customerId: number): Promise<OrdersResult>

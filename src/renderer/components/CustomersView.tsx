@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import type { ConnState, Customer, CustomersResult, StoreStats } from '../../shared/types'
 import { api, isMock } from '../api'
 import { avatarPalette, faDate, faDigits, faNum, faTime } from '../lib/format'
+import { forceRefresh } from '../lib/refresh'
 import AddCustomerModal from './AddCustomerModal'
 import OrderHistoryModal from './OrderHistoryModal'
 import {
@@ -66,7 +67,7 @@ export default function CustomersView({ configured, conn, storeName, onGoSetting
     setSearchInput('')
     window.clearTimeout(debounceRef.current)
     setParams((p) => ({ ...p, search: '', page: 1 }))
-    setLoadCount((n) => n + 1)
+    forceRefresh(setLoadCount)
   }
 
   useEffect(() => {
@@ -178,7 +179,7 @@ export default function CustomersView({ configured, conn, storeName, onGoSetting
         <div className="notice err">
           <IconAlert size={17} />
           <div style={{ flex: 1 }}>{conn.message}</div>
-          <button type="button" className="btn btn-sm btn-ghost" onClick={() => setLoadCount((n) => n + 1)}>
+          <button type="button" className="btn btn-sm btn-ghost" onClick={() => forceRefresh(setLoadCount)}>
             تلاش دوباره
           </button>
         </div>
@@ -281,7 +282,7 @@ export default function CustomersView({ configured, conn, storeName, onGoSetting
                   type="button"
                   className={'btn-icon' + (loading ? '' : '')}
                   title="بارگذاری مجدد"
-                  onClick={() => setLoadCount((n) => n + 1)}
+                  onClick={() => forceRefresh(setLoadCount)}
                 >
                   <IconRefresh size={15} className={loading ? 'spin' : ''} />
                 </button>
@@ -296,7 +297,7 @@ export default function CustomersView({ configured, conn, storeName, onGoSetting
                 <div className="empty-title">دریافت مشتریان ناموفق بود</div>
                 <div className="empty-sub">{error}</div>
                 <div className="empty-action">
-                  <button type="button" className="btn btn-ghost" onClick={() => setLoadCount((n) => n + 1)}>
+                  <button type="button" className="btn btn-ghost" onClick={() => forceRefresh(setLoadCount)}>
                     <IconRefresh size={15} />
                     تلاش دوباره
                   </button>

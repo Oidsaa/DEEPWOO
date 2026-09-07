@@ -737,6 +737,11 @@ function mockOrderNotes(order: Order): OrderNote[] {
 const userOrderNotes = new Map<number, OrderNote[]>()
 
 export const mockApi: ApiBridge = {
+  /** Demo has no cross-view cache — every read already rebuilds fresh demo data. */
+  async clearCache() {
+    await delay(40)
+    return { ok: true }
+  },
   async getSettings(): Promise<Settings> {
     await delay(120)
     return storedSettings()
