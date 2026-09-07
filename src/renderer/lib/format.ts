@@ -17,6 +17,9 @@ export const ORDER_STATUS_META: Record<string, { fa: string; cls: string }> = {
   cancelled: { fa: 'لغو شده', cls: 'pill-red' },
   refunded: { fa: 'بازپرداخت شده', cls: 'pill-indigo' },
   trash: { fa: 'حذف شده', cls: 'pill-dim' },
+  'checkout-draft': { fa: 'سبد رها شده', cls: 'pill-dim' },
+  'auto-draft': { fa: 'سبد رها شده', cls: 'pill-dim' },
+  draft: { fa: 'پیش‌نویس', cls: 'pill-dim' },
   // Custom statuses seen on Iranian WooCommerce stores.
   'sale-hazouri': { fa: 'فروش حضوری', cls: 'pill-green' },
   foroshgah: { fa: 'تایید فروشگاه', cls: 'pill-teal' },
@@ -78,6 +81,20 @@ export function faDate(iso?: string | null): string {
     return new Intl.DateTimeFormat('fa-IR', { year: 'numeric', month: 'short', day: 'numeric' }).format(d)
   } catch {
     return iso
+  }
+}
+
+const faDayFmt = new Intl.DateTimeFormat('fa-IR', { day: 'numeric' })
+
+/** Persian (Jalali) day-of-month of an ISO date — e.g. «۱۸» (not the Gregorian day). */
+export function faDay(iso?: string | null): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  try {
+    return faDayFmt.format(d)
+  } catch {
+    return faDigits(String(d.getDate()))
   }
 }
 

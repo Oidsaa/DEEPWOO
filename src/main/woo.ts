@@ -14,6 +14,7 @@ import type {
   OrdersResult,
   OrderStatusTotal,
   Product,
+  ProductCatalog,
   ProductDetail,
   ProductOrdersResult,
   ProductPatch,
@@ -27,7 +28,7 @@ import type {
 } from '../shared/types'
 import { phonesMatch } from '../shared/phone'
 import { persianMonthKey } from '../shared/persianMonth'
-import { aggregateSalesReport } from '../shared/reports'
+import { aggregateSalesReport, resolveReportWindow } from '../shared/reports'
 import { normalizeSiteUrl } from './settings'
 
 export interface WooConfig {
@@ -333,6 +334,38 @@ export async function listProducts(
 }
 
 /**
+ * Full (bounded) product catalog — every non-trash status, newest first.
+ * Powers the محصولات/موجودی report tabs (top-rated + low-stock alerts),
+ * which need every page of the catalog at once (listProducts only returns
+ * the requested page slice).
+ */
+export async function getProductCatalog(cfg: WooConfig): Promise<ProductCatalog> {
+  const out: Product[] = []
+  let truncated = false
+  for (const status of PRODUCT_STATUSES) {
+    let p = 0
+    for (;;) {
+      p += 1
+      const { data, headers } = await wooRequest<Product[]>(
+        cfg,
+        'GET',
+        '/products',
+        { page: p, per_page: 100, status, orderby: 'date', order: 'desc' },
+      )
+      out.push(...data)
+      const totalPages = Math.max(1, Number(headers.get('x-wp-totalpages') ?? 1))
+      if (data.length === 0 || p >= totalPages) break
+      if (p >= MAX_PRODUCT_STATUS_PAGES) {
+        truncated = true
+        break
+      }
+    }
+  }
+  const products = out.sort((a, b) => +new Date(b.date_created) - +new Date(a.date_created))
+  return { products, total: products.length, truncated }
+}
+
+/**
  * Full product record plus its variations (variable products only). Reads
  * every variation page up to a hard cap of 2000 variations.
  */
@@ -465,18 +498,12 @@ export async function getSalesReports(
   query: ReportsQuery,
   costs?: Record<string, number>,
 ): Promise<SalesReport> {
-  const days = Math.min(365, Math.max(1, Math.round(query?.days ?? 30) || 30))
-  const now = new Date()
-  const from = new Date(now)
-  from.setHours(0, 0, 0, 0)
-  from.setDate(from.getDate() - (days - 1))
+  const { fromMs, toMs, days } = resolveReportWindow(query)
+  const from = new Date(fromMs)
+  const to = new Date(toMs + 1) // exclusive end → includes the whole last day
   // The equal-length window right before the report window (the «دورهٔ قبل»).
   const prevFrom = new Date(from)
   prevFrom.setDate(prevFrom.getDate() - days)
-  const to = new Date(from)
-  to.setDate(to.getDate() + days) // exclusive end → includes the whole last day
-  const fromMs = from.getTime()
-  const toMs = to.getTime() - 1 // last millisecond of the final day
 
   // Scan each window in its own capped loop so the previous period can never
   // crowd the report's own (more recent) orders out of the page cap.
@@ -506,10 +533,7 @@ export async function getSalesReports(
     return { orders: out, truncated: page >= MAX_REPORT_PAGES && page < totalPages }
   }
 
-  const [cur, prev] = await Promise.all([
-    scan(from, to),
-    scan(prevFrom, from),
-  ])
+  const [cur, prev] = await Promise.all([scan(from, to), scan(prevFrom, from)])
   return {
     ...aggregateSalesReport(cur.orders, days, fromMs, toMs, costs, prev.orders),
     truncated: cur.truncated || prev.truncated,

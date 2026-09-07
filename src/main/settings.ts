@@ -33,6 +33,10 @@ export function getSettings(): Settings {
                 .map(([k, v]) => [k, v as number]),
             )
           : undefined,
+      lowStockThreshold:
+        typeof data.lowStockThreshold === 'number' && Number.isFinite(data.lowStockThreshold)
+          ? clampThreshold(data.lowStockThreshold)
+          : undefined,
     }
   } catch {
     return { ...EMPTY }
@@ -71,7 +75,16 @@ export function sanitizeSettings(input: Settings): Settings {
         .map(([k, v]) => [k.trim(), Number(v)])
         .filter(([, v]) => Number.isFinite(v) && (v as number) > 0),
     ),
+    lowStockThreshold:
+      typeof input.lowStockThreshold === 'number' && Number.isFinite(input.lowStockThreshold)
+        ? clampThreshold(input.lowStockThreshold)
+        : undefined,
   }
+}
+
+/** حد نصاب موجودی: عدد صحیح بین ۱ تا ۹۹۹۹ (پیش‌فرضِ UI وقتی خالی است: ۵). */
+function clampThreshold(n: number): number {
+  return Math.min(9999, Math.max(1, Math.round(n)))
 }
 
 export function normalizeSiteUrl(input: string): string {

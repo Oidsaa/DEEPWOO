@@ -32,6 +32,7 @@ const api: ApiBridge = {
   printBulk: (doc) => ipcRenderer.invoke('print:bulk', doc),
   getStoreStats: () => ipcRenderer.invoke('wc:store-stats'),
   listProducts: (query: ListProductsQuery) => ipcRenderer.invoke('wc:products', query),
+  getProductCatalog: () => ipcRenderer.invoke('wc:product-catalog'),
   getProductDetail: (productId: number) => ipcRenderer.invoke('wc:product-detail', productId),
   updateProductVariation: (productId: number, variationId: number, patch: VariationPatch) =>
     ipcRenderer.invoke('wc:product-variation-update', productId, variationId, patch),

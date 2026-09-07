@@ -3494,3 +3494,79 @@ table.tbl {
   color: var(--muted, #9aa);
   background: rgba(255, 255, 255, 0.05);
 }
+
+/* ===== گزارشات جدید (خلاصه / مشتریان / محصولات / سفارش‌ها / موجودی) ===== */
+.stat-ic.t-red {
+  color: #fb7185;
+  background: rgba(251, 113, 133, 0.14);
+}
+.rp-bar.danger {
+  background: linear-gradient(90deg, #f43f5e, #fb7185);
+}
+.rp-rank-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.bar-wrap {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 3px;
+  align-items: stretch;
+  min-width: 64px;
+  font-size: 11.5px;
+  font-weight: 700;
+  text-align: center;
+}
+.rp-threshold-input {
+  width: 64px;
+  text-align: left;
+  direction: ltr;
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.05);
+  color: inherit;
+  font-size: 12.5px;
+  font-weight: 700;
+}
+.rp-threshold-input:focus {
+  outline: none;
+  border-color: var(--accent, #2dd4bf);
+}
+/* اعداد وضعیت در ردیف‌های عملیاتی لچرتر از متن عادی باشند */
+.rp-table .num {
+  white-space: nowrap;
+}
+
+/* ===== بازهٔ سفارشی (custom date range) ===== */
+.range-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.range-lbl {
+  font-size: 11px;
+  color: var(--muted, #9aa);
+}
+.rp-range-input {
+  width: 96px;
+  text-align: center;
+  direction: ltr;
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.05);
+  color: inherit;
+  font-size: 12.5px;
+}
+.rp-range-input:focus {
+  outline: none;
+  border-color: var(--accent, #2dd4bf);
+}
+.range-err {
+  font-size: 10.5px;
+  color: #fb7185;
+}

@@ -14,6 +14,7 @@ import type {
   OrdersResult,
   OrderPayload,
   Product,
+  ProductCatalog,
   ReportsQuery,
   SalesReport,
   ProductDetail,
@@ -28,7 +29,7 @@ import type {
 } from '../../shared/types'
 import { persianMonthKey } from '../../shared/persianMonth'
 import { phonesMatch } from '../../shared/phone'
-import { aggregateSalesReport } from '../../shared/reports'
+import { aggregateSalesReport, resolveReportWindow } from '../../shared/reports'
 import { orderStatusMeta } from './format'
 
 /* ------------------------------------------------------------------ */
@@ -248,6 +249,11 @@ function makeProduct(i: number): Product {
   const day = 1 + Math.floor(rnd() * 360)
   const created = new Date(Date.UTC(year, 0, 1) + day * 86400000 + Math.floor(rnd() * 86400000))
   const statusRoll = i % 23 === 0 ? 'private' : i % 31 === 0 ? 'draft' : i % 41 === 0 ? 'pending' : 'publish'
+  // Ratings: independent seeded stream so the other fields never shift.
+  const rr = seeded(i * 9001 + 55)
+  const rated = rr() > 0.35
+  const avg = Math.min(5, Math.round((3.3 + rr() * 1.7) * 10) / 10)
+  const count = rated ? 1 + Math.floor(rr() * 140) : 0
 
   return {
     id: 9000 + i,
@@ -267,6 +273,9 @@ function makeProduct(i: number): Product {
     categories: [{ id: cat.id, name: cat.fa, slug: cat.slug }],
     images: [],
     date_created: created.toISOString(),
+    average_rating: String(avg),
+    rating_count: count,
+    review_count: Math.max(0, Math.floor(count * 0.7)),
   }
 }
 
@@ -338,6 +347,7 @@ function demoLine(rnd: () => number): {
   sku: string
   product_id: number
   variation_id?: number
+  attrs?: Array<{ name: string; option: string }>
 } {
   const product = ALL_PRODUCTS[Math.floor(rnd() * ALL_PRODUCTS.length)]
   const variations = product.type === 'variable' ? mockVariationsOf(product) : []
@@ -354,7 +364,16 @@ function demoLine(rnd: () => number): {
     sku,
     product_id: product.id,
     ...(variation ? { variation_id: variation.id } : {}),
+    ...(variation ? { attrs: variation.attributes.map((a) => ({ name: a.name, option: a.option })) } : {}),
   }
+}
+
+/** Order-line meta (attribute values) built from a demo line's variation. */
+function lineMetaOfDemo(l: {
+  attrs?: Array<{ name: string; option: string }>
+}): Array<{ key: string; value: string; display_key: string; display_value: string }> | undefined {
+  if (!l.attrs || l.attrs.length === 0) return undefined
+  return l.attrs.map((a) => ({ key: a.name, value: a.option, display_key: a.name, display_value: a.option }))
 }
 
 /** Deterministic orders that contain one product (incl. its variations). */
@@ -539,6 +558,7 @@ function makeOrders(customer: Customer): Order[] {
         sku: l.sku,
         product_id: l.product_id,
         ...(l.variation_id ? { variation_id: l.variation_id } : {}),
+        ...(lineMetaOfDemo(l) ? { meta_data: lineMetaOfDemo(l) } : {}),
       })),
       shipping_lines: [{ method_title: x.method_title, total: String(shipTotal) }],
       coupon_lines: x.coupon ? [x.coupon] : undefined,
@@ -603,6 +623,7 @@ function makeGuestOrders(): Order[] {
         sku: l.sku,
         product_id: l.product_id,
         ...(l.variation_id ? { variation_id: l.variation_id } : {}),
+        ...(lineMetaOfDemo(l) ? { meta_data: lineMetaOfDemo(l) } : {}),
       })),
       shipping_lines: [{ method_title: x.method_title, total: String(shipTotal) }],
       coupon_lines: x.coupon ? [x.coupon] : undefined,
@@ -618,6 +639,49 @@ function makeGuestOrders(): Order[] {
     })
   }
   return orders
+}
+
+/**
+ * A few saved-cart (checkout-draft) demo orders inside the report window —
+ * the store's real abandoned carts need a plugin, but the preview should
+ * show the گزارش «سبدهای رها شده» in action. Never part of allOrders(), so
+ * the ordinary orders lists stay clean.
+ */
+function demoAbandonedIn(fromMs: number, toMs: number): Order[] {
+  const rnd = seeded(77007)
+  const spanDays = Math.max(1, Math.round((toMs - fromMs) / 86400000))
+  const n = Math.min(4, Math.max(1, Math.floor(spanDays / 10) + (spanDays >= 7 ? 1 : 0)))
+  const out: Order[] = []
+  for (let i = 0; i < n; i++) {
+    const at = Math.max(fromMs, toMs - Math.floor(rnd() * spanDays) * 86400000 - Math.floor(rnd() * 86400000))
+    if (at < fromMs || at > toMs) continue
+    const lineCount = 1 + Math.floor(rnd() * 2)
+    const lines = Array.from({ length: lineCount }, () => demoLine(rnd))
+    const total = Math.round(lines.reduce((a, x) => a + Number(x.total), 0) * 100) / 100
+    out.push({
+      id: 520000 + i + 1,
+      number: String(25000 + i + 1),
+      status: 'checkout-draft',
+      date_created: new Date(at).toISOString(),
+      date_modified: new Date(at + 1800 * 1000).toISOString(),
+      total: String(total),
+      currency: '',
+      payment_method_title: '',
+      customer_id: 0,
+      line_items: lines.map((l) => ({
+        name: l.name,
+        quantity: l.quantity,
+        price: l.unit,
+        total: l.total,
+        sku: l.sku,
+        product_id: l.product_id,
+        ...(l.variation_id ? { variation_id: l.variation_id } : {}),
+        ...(lineMetaOfDemo(l) ? { meta_data: lineMetaOfDemo(l) } : {}),
+      })),
+      billing: {},
+    })
+  }
+  return out
 }
 
 /** All store orders (newest first), lazily built and cached until a customer is created. */
@@ -801,6 +865,11 @@ export const mockApi: ApiBridge = {
       outOfStock: base.filter((p) => p.stock_status === 'outofstock').length,
       totalSales: Math.round(base.reduce((a, p) => a + (Number(p.total_sales) || 0), 0) * 100) / 100,
     }
+  },
+  async getProductCatalog(): Promise<ProductCatalog> {
+    await delay(500)
+    if (!isDemoSettings(storedSettings())) throw new Error(NOT_REAL_MSG)
+    return { products: ALL_PRODUCTS, total: ALL_PRODUCTS.length, truncated: false }
   },
   async getProductDetail(productId: number): Promise<ProductDetail> {
     await delay(500)
@@ -1090,18 +1159,9 @@ export const mockApi: ApiBridge = {
   async getReports(query: ReportsQuery): Promise<SalesReport> {
     await delay(700)
     if (!isDemoSettings(storedSettings())) throw new Error(NOT_REAL_MSG)
-    const days = Math.min(365, Math.max(1, Math.round(query?.days ?? 30) || 30))
-    const now = new Date()
-    const from = new Date(now)
-    from.setHours(0, 0, 0, 0)
-    from.setDate(from.getDate() - (days - 1))
-    // The equal-length window right before (the «دورهٔ قبل» basis).
-    const prevFrom = new Date(from)
+    const { fromMs, toMs, days } = resolveReportWindow(query)
+    const prevFrom = new Date(fromMs)
     prevFrom.setDate(prevFrom.getDate() - days)
-    const to = new Date(from)
-    to.setDate(to.getDate() + days)
-    const fromMs = from.getTime()
-    const toMs = to.getTime() - 1
     const prevFromMs = prevFrom.getTime()
     // All demo orders were dated within the last ~2 years, so small windows
     // naturally return only the orders that fall inside them.
@@ -1114,6 +1174,8 @@ export const mockApi: ApiBridge = {
       const t = new Date(o.date_created).getTime()
       return t >= prevFromMs && t < fromMs
     })
-    return aggregateSalesReport(inWindow, days, fromMs, toMs, storedSettings().productCosts, prevWindow)
+    // Abandoned carts are demo-only extras inside the window (never in allOrders).
+    const windowWithCarts = [...inWindow, ...demoAbandonedIn(fromMs, toMs)]
+    return aggregateSalesReport(windowWithCarts, days, fromMs, toMs, storedSettings().productCosts, prevWindow)
   },
 }

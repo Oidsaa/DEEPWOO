@@ -20,6 +20,11 @@ export interface Settings {
    * in تنظیمات and read by the «سود ناخالص» sales report.
    */
   productCosts?: Record<string, number>
+  /**
+   * حد نصاب موجودی (reorder alert): products whose stock_quantity is at or
+   * below this number are flagged in the گزارشات «موجودی» tab. Default 5.
+   */
+  lowStockThreshold?: number
 }
 
 /** Minimal shape of a WooCommerce customer (/wp-json/wc/v3/customers). */
@@ -92,6 +97,10 @@ export interface Product {
   categories: Array<{ id: number; name: string; slug: string }>
   images: Array<{ id: number; src: string; name: string }>
   date_created: string
+  /** Product reviews (read-only from the store catalog — drives «محصولات دارای بیشترین امتیاز»). */
+  average_rating?: string
+  rating_count?: number
+  review_count?: number
 }
 
 export interface ProductsResult {
@@ -438,6 +447,12 @@ export interface ApiBridge {
   updateProduct(productId: number, patch: ProductPatch): Promise<Product>
   createProduct(payload: ProductPayload): Promise<Product>
   listProductOrders(productId: number): Promise<ProductOrdersResult>
+  /**
+   * Full (bounded) product catalog for the محصولات/موجودی report tabs — all
+   * non-trash statuses, newest first. Separate from listProducts because the
+   * report tabs need every page at once (ratings + stock alerts).
+   */
+  getProductCatalog(): Promise<ProductCatalog>
 }
 
 /** Amounts for one sales-report slice (payments / statuses). */
@@ -513,6 +528,157 @@ export interface CitySale {
   total: number
 }
 
+/* ------------------------------------------------------------------ */
+/* Analytics additions to the sales report (خلاصه / مشتریان / محصولات /
+/* سفارش‌ها). All are computed by the shared pure aggregator, so the   */
+/* real client and the browser demo always agree on the same orders.   */
+/* ------------------------------------------------------------------ */
+
+/** One aggregated customer (from the window's counted orders). */
+export interface ReportCustomer {
+  /** Store account id — 0 when the buyer checked out as a guest. */
+  id: number
+  name: string
+  city?: string
+  /** ISO of the customer's earliest counted order inside the window. */
+  firstOrder: string
+  /** Counted orders inside the window. */
+  orders: number
+  /** Counted revenue inside the window. */
+  revenue: number
+}
+
+/** One «نسبت» bucket of customers by how many counted orders they placed. */
+export interface CustomerBucket {
+  label: string
+  count: number
+}
+
+/** Customer analytics of the report window (behaviour is «تقریبی» — see UI). */
+export interface CustomerInsights {
+  /** Unique customers with counted orders in the window (accounts + guests). */
+  active: number
+  /** Of active: checked out without an account (customer_id 0). */
+  guests: number
+  /** Active identities with no counted order in the equal window right before. */
+  newCustomers: number
+  /** Active identities that also bought in the equal previous window. */
+  returning: number
+  /** Active customers with ≥ 2 counted orders in the window. */
+  repeatBuyers: number
+  /** repeatBuyers / active × 100 — null when no counted orders. */
+  repeatRate: number | null
+  /** فروش هر مشتری فعال (countedRevenue / active). */
+  avgRevenue: number | null
+  /** نسبت سفارش به مشتری = counted orders / active — null when no counted orders. */
+  orderRatio: number | null
+  /** Customers bucketed by their counted-order count (1 / 2 / ۳–۵ / ۶+). */
+  buckets: CustomerBucket[]
+  /** Top 10 customers by counted revenue (ties → more orders first). */
+  topByAmount: ReportCustomer[]
+  /** Top 10 customers by counted order count (ties → more revenue first). */
+  topByOrders: ReportCustomer[]
+}
+
+/** Coupon usage across the window's COUNTED orders (app rule). */
+export interface CouponUse {
+  code: string
+  /** Distinct counted orders that used the code. */
+  orders: number
+  /** Sum of the coupon discounts on those orders. */
+  discount: number
+}
+
+/**
+ * Sales funnel «تقریبی»: derived from the order statuses of the window (the
+ * store's REST API exposes no session/visit data).
+ */
+export interface FunnelInsights {
+  /** Every order created in the window (any status). */
+  created: number
+  /** Still open: pending / pending-payment / on-hold / drafts. */
+  awaiting: number
+  /** Beyond awaiting payment and not lost (processing, completed, …). */
+  paid: number
+  /** Finished orders (completed — a subset of paid). */
+  completed: number
+  /** failed / cancelled / refunded / trash. */
+  lost: number
+  /** awaiting / created × 100. */
+  waitingPct: number | null
+  /** paid / created × 100. */
+  paidPct: number | null
+  /** completed / created × 100. */
+  completionPct: number | null
+  /** lost / created × 100. */
+  lostPct: number | null
+}
+
+/** One compact order row for the operational (سفارش‌ها) reports. */
+export interface OpsOrderRow {
+  id: number
+  number: string
+  status: string
+  date: string
+  total: number
+  customer: string
+  payment?: string
+  items: number
+}
+
+/** One operational group: count/total over the whole slice + the newest rows. */
+export interface OpsGroup {
+  /** ISO start of the slice. */
+  from: string
+  /** ISO end of the slice. */
+  to: string
+  count: number
+  total: number
+  rows: OpsOrderRow[]
+  /** true when more rows exist than the display cap. */
+  rowsTruncated: boolean
+}
+
+/** Operational order reports of the window (لغو/بازگشت، معوق، سبد رها شده). */
+export interface OpsInsights {
+  /** Cancelled + refunded orders of the whole window. */
+  cancelled: OpsGroup
+  /** Cancelled + refunded orders of the last 7 days of the window. */
+  cancelled7: OpsGroup
+  /** On-hold / pending / pending-payment orders of the window. */
+  waiting: OpsGroup
+  /** Cart sessions saved as draft/checkout-draft orders (best-effort). */
+  abandoned: OpsGroup
+}
+
+/** One popular product attribute value (از meta خطوط سفارش). */
+export interface AttrHit {
+  /** Attribute name — e.g. «رنگ» / «سایز». */
+  label: string
+  /** Attribute value — e.g. «مشکی». */
+  value: string
+  /** Units sold with this value. */
+  units: number
+  /** Distinct counted orders containing it. */
+  orders: number
+}
+
+/** Top-sellers of the final 7 days of the window (5 محصول/ترکیب برتر هفته). */
+export interface WeeklyTop {
+  from: string
+  to: string
+  top: TopSeller[]
+}
+
+/** Product catalog snapshot for the محصولات/موجودی tabs (not window-bound). */
+export interface ProductCatalog {
+  /** All non-trash products of the store (bounded scan, newest first). */
+  products: Product[]
+  total: number
+  /** true when more products exist beyond the safety cap. */
+  truncated: boolean
+}
+
 /**
  * Summary of the equal-length window that ends right before the report's
  * window — the «دورهٔ قبل» basis for the growth percentages.
@@ -553,12 +719,29 @@ export interface SalesReport {
   products: TopSeller[]
   /** سود ناخالص بازه — از قیمت تمام‌شدهٔ تنظیمات (productCosts). */
   profit: GrossProfitSummary
+  /** Customer analytics of the window (مشتریان tab). */
+  customers: CustomerInsights
+  /** Coupon usage across counted orders (مشتریان tab). */
+  coupons: CouponUse[]
+  /** Order-status funnel «تقریبی» (خلاصه tab). */
+  funnel: FunnelInsights
+  /** Operational order reports (سفارش‌ها tab). */
+  ops: OpsInsights
+  /** Top 5 of the final week of the window (محصولات tab). */
+  weekly: WeeklyTop
+  /** محبوب‌ترین ویژگی‌های محصولات از meta خطوط سفارش (محصولات tab). */
+  features: AttrHit[]
   /** True when the scan hit the safety cap before the window ended. */
   truncated: boolean
 }
 
 export interface ReportsQuery {
-  days: number
+  /** Preset window width in days (امروز / ۷ / ۳۰ / ۹۰ روز اخیر). */
+  days?: number
+  /** Custom range start — local date key YYYY-MM-DD (بازهٔ سفارشی). */
+  from?: string
+  /** Custom range end — local date key YYYY-MM-DD (inclusive). */
+  to?: string
 }
 
 export type ViewId = 'customers' | 'quick-order' | 'orders' | 'products' | 'reports' | 'settings'

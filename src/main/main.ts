@@ -14,6 +14,7 @@ import {
   createOrderNote,
   updateOrderStatus,
   listProducts,
+  getProductCatalog,
   getProductDetail,
   updateProductVariation,
   updateProduct,
@@ -216,6 +217,18 @@ function registerIpc(): void {
     }
     try {
       return await listProducts(cfg, query ?? {})
+    } catch (err) {
+      throw new Error(err instanceof Error ? err.message : String(err))
+    }
+  })
+
+  ipcMain.handle('wc:product-catalog', async () => {
+    const cfg = getSettings()
+    if (!cfg.siteUrl || !cfg.consumerKey || !cfg.consumerSecret) {
+      throw new Error('تنظیمات API کامل نشده است.')
+    }
+    try {
+      return await getProductCatalog(cfg)
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
     }
