@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import path from 'node:path'
-import { getSettings, saveSettings, clearSettings, sanitizeSettings } from './settings'
-import { cachedRun, clearCaches, bumpCacheVersion } from './cache'
+import { getSettings, saveSettings, clearSettings, sanitizeSettings, cacheTtlMs, cacheStaleMs } from './settings'
+import { cachedRun, clearCaches, bumpCacheVersion, initCache, flushCache, cacheStatus } from './cache'
 import {
   testConnection,
   listCustomers,
@@ -119,9 +119,6 @@ async function printViaDialog(doc: PrintableDoc): Promise<{ ok: boolean }> {
   }
 }
 
-/** Cache TTLs (ms) per endpoint weight — see cache.ts. */
-const TTL = { list: 60_000, heavy: 120_000, scan: 300_000, detail: 300_000, notes: 120_000, stats: 120_000 } as const
-
 /** Stable cache key for one IPC read (endpoint + serialized arguments). */
 const ck = (prefix: string, ...parts: unknown[]): string => prefix + ':' + JSON.stringify(parts)
 
@@ -149,6 +146,9 @@ function registerIpc(): void {
     return { ok: true }
   })
 
+  // نشانگر «آخرین همگام‌سازی» در سربرگ هر نما: زمان واقعی آخرین دریافت از فروشگاه.
+  ipcMain.handle('cache:status', () => cacheStatus())
+
   ipcMain.handle('wc:test', async (_event, override?: Settings) => {
     const cfg = override && override.siteUrl && override.consumerKey && override.consumerSecret
       ? sanitizeSettings(override)
@@ -174,7 +174,7 @@ function registerIpc(): void {
     }
     try {
       const q = query ?? {}
-      return await cachedRun(ck('customers', q), TTL.list, () => listCustomers(cfg, q))
+      return await cachedRun(ck('customers', q), cacheTtlMs(cfg, 'list'), () => listCustomers(cfg, q))
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
     }
@@ -215,7 +215,7 @@ function registerIpc(): void {
     }
     try {
       const q = query ?? { days: 30 }
-      return await cachedRun(ck('reports', q), TTL.scan, () => getSalesReports(cfg, q, cfg.productCosts))
+      return await cachedRun(ck('reports', q), cacheTtlMs(cfg, 'report'), () => getSalesReports(cfg, q, cfg.productCosts))
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
     }
@@ -227,7 +227,7 @@ function registerIpc(): void {
       throw new Error('تنظیمات API کامل نشده است.')
     }
     try {
-      return await cachedRun('store-stats', TTL.stats, () => getStoreStats(cfg))
+      return await cachedRun('store-stats', cacheTtlMs(cfg, 'detail'), () => getStoreStats(cfg))
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
     }
@@ -240,7 +240,7 @@ function registerIpc(): void {
     }
     try {
       const q = query ?? {}
-      return await cachedRun(ck('products', q), TTL.list, () => listProducts(cfg, q))
+      return await cachedRun(ck('products', q), cacheTtlMs(cfg, 'list'), () => listProducts(cfg, q))
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
     }
@@ -252,7 +252,7 @@ function registerIpc(): void {
       throw new Error('تنظیمات API کامل نشده است.')
     }
     try {
-      return await cachedRun('product-catalog', TTL.detail, () => getProductCatalog(cfg))
+      return await cachedRun('product-catalog', cacheTtlMs(cfg, 'report'), () => getProductCatalog(cfg))
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
     }
@@ -264,7 +264,7 @@ function registerIpc(): void {
       throw new Error('تنظیمات API کامل نشده است.')
     }
     try {
-      return await cachedRun(ck('customer-orders', customerId), TTL.heavy, () => listCustomerOrders(cfg, customerId))
+      return await cachedRun(ck('customer-orders', customerId), cacheTtlMs(cfg, 'detail'), () => listCustomerOrders(cfg, customerId))
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
     }
@@ -277,7 +277,7 @@ function registerIpc(): void {
     }
     try {
       const q = query ?? {}
-      return await cachedRun(ck('orders', q), TTL.list, () => listOrders(cfg, q))
+      return await cachedRun(ck('orders', q), cacheTtlMs(cfg, 'list'), () => listOrders(cfg, q))
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
     }
@@ -289,7 +289,7 @@ function registerIpc(): void {
       return []
     }
     try {
-      return await cachedRun('order-status-totals', TTL.list, () => listOrderStatusTotals(cfg))
+      return await cachedRun('order-status-totals', cacheTtlMs(cfg, 'list'), () => listOrderStatusTotals(cfg))
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
     }
@@ -301,7 +301,7 @@ function registerIpc(): void {
       throw new Error('تنظیمات API کامل نشده است.')
     }
     try {
-      return await cachedRun(ck('notes', orderId), TTL.notes, () => listOrderNotes(cfg, orderId))
+      return await cachedRun(ck('notes', orderId), cacheTtlMs(cfg, 'detail'), () => listOrderNotes(cfg, orderId))
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
     }
@@ -341,7 +341,7 @@ function registerIpc(): void {
       throw new Error('تنظیمات API کامل نشده است.')
     }
     try {
-      return await cachedRun(ck('product-detail', productId), TTL.detail, () => getProductDetail(cfg, productId))
+      return await cachedRun(ck('product-detail', productId), cacheTtlMs(cfg, 'report'), () => getProductDetail(cfg, productId))
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
     }
@@ -409,7 +409,7 @@ function registerIpc(): void {
       throw new Error('تنظیمات API کامل نشده است.')
     }
     try {
-      return await cachedRun(ck('product-orders', productId), TTL.heavy, () => listProductOrders(cfg, productId))
+      return await cachedRun(ck('product-orders', productId), cacheTtlMs(cfg, 'detail'), () => listProductOrders(cfg, productId))
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
     }
@@ -417,6 +417,9 @@ function registerIpc(): void {
 }
 
 app.whenReady().then(() => {
+  // Hydrate the persisted WooCommerce response cache before any IPC read runs.
+  // TTLs and the cold-start stale shelf come from the user's Settings (تنظیمات).
+  initCache(path.join(app.getPath('userData'), 'wc-cache.json'), cacheStaleMs(getSettings()))
   registerIpc()
   createWindow()
 
@@ -428,3 +431,6 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
+
+// Persist the latest cache snapshot when the app exits.
+app.on('will-quit', () => flushCache())

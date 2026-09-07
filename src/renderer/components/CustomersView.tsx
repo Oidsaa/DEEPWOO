@@ -4,6 +4,7 @@ import type { ConnState, Customer, CustomersResult, StoreStats } from '../../sha
 import { api, isMock } from '../api'
 import { avatarPalette, faDate, faDigits, faNum, faTime } from '../lib/format'
 import { forceRefresh } from '../lib/refresh'
+import { lastStoreSync } from '../lib/syncStamp'
 import AddCustomerModal from './AddCustomerModal'
 import OrderHistoryModal from './OrderHistoryModal'
 import {
@@ -82,10 +83,12 @@ export default function CustomersView({ configured, conn, storeName, onGoSetting
     api
       .listCustomers({ search: params.search, page: params.page, perPage: params.perPage })
       .then((r) => {
-        if (!cancelled) {
-          setData(r)
-          setSyncedAt(new Date())
-        }
+        if (cancelled) return
+        setData(r)
+        // Show the REAL store-fetch time (cache-aware), not the delivery time.
+        void lastStoreSync('customers').then((d) => {
+          if (!cancelled) setSyncedAt(d ?? new Date())
+        })
       })
       .catch((e: unknown) => {
         if (!cancelled) {

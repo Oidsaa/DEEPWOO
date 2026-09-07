@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { ConnState, Product, ProductsResult } from '../../shared/types'
 import { api, isMock } from '../api'
-import { avatarPalette, faDate, faDigits, faNum } from '../lib/format'
+import { avatarPalette, faDate, faDigits, faNum, faTime } from '../lib/format'
 import { forceRefresh } from '../lib/refresh'
+import { lastStoreSync } from '../lib/syncStamp'
 import AddProductModal from './AddProductModal'
 import BulkPriceModal from './BulkPriceModal'
 import BulkStockModal from './BulkStockModal'
@@ -92,6 +93,7 @@ export default function ProductsView({ configured, conn, storeName, onGoSettings
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [loadCount, setLoadCount] = useState(0)
+  const [syncedAt, setSyncedAt] = useState<Date | null>(null)
   const debounceRef = useRef<number | undefined>(undefined)
   const [showAddModal, setShowAddModal] = useState(false)
   const [detailProduct, setDetailProduct] = useState<Product | null>(null)
@@ -126,7 +128,12 @@ export default function ProductsView({ configured, conn, storeName, onGoSettings
         perPage: params.perPage,
       })
       .then((r) => {
-        if (!cancelled) setData(r)
+        if (cancelled) return
+        setData(r)
+        // Show the REAL store-fetch time (cache-aware), not the delivery time.
+        void lastStoreSync('products').then((d) => {
+          if (!cancelled) setSyncedAt(d ?? new Date())
+        })
       })
       .catch((e: unknown) => {
         if (!cancelled) {
@@ -278,7 +285,8 @@ export default function ProductsView({ configured, conn, storeName, onGoSettings
                 <div className="panel-title">فهرست محصولات</div>
                 <div className="panel-sub">
                   {data
-                    ? `نمایش ${faNum(data.products.length)} محصول از ${faNum(data.total)}`
+                    ? `نمایش ${faNum(data.products.length)} محصول از ${faNum(data.total)}` +
+                      (syncedAt ? ` • همگام‌سازی با فروشگاه در ${faTime(syncedAt)}` : '')
                     : 'بارگذاری داده‌ها از فروشگاه…'}
                   {params.stockStatus && data && (
                     <>

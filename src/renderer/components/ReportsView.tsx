@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { ConnState, CustomerInsights, OpsGroup, OpsOrderRow, Product, SalesReport, TopSeller } from '../../shared/types'
 import { api, isMock } from '../api'
-import { faDate, faDay, faDigits, faNum, orderStatusMeta } from '../lib/format'
+import { faDate, faDay, faDigits, faNum, faTime, orderStatusMeta } from '../lib/format'
+import { lastStoreSync } from '../lib/syncStamp'
 import { jalaliToLocalKey, localKeyDaysAgo, localKeyToJalali } from '../lib/jalali'
 import { stockAlertsOf, topRatedProducts } from '../../shared/reports'
 import {
@@ -970,6 +971,7 @@ export default function ReportsView({ configured, conn, storeName, onGoSettings 
   const [rangeErr, setRangeErr] = useState<string | null>(null)
   const [tab, setTab] = useState<RepTab>('overview')
   const [report, setReport] = useState<SalesReport | null>(null)
+  const [reportSync, setReportSync] = useState<Date | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [catalog, setCatalog] = useState<Product[] | null>(null)
@@ -986,6 +988,8 @@ export default function ReportsView({ configured, conn, storeName, onGoSettings 
       try {
         const query = 'days' in sel ? { days: sel.days } : { from: sel.from, to: sel.to }
         setReport(await api.getReports(query))
+        // Show the REAL store-fetch time (cache-aware), not the delivery time.
+        setReportSync((await lastStoreSync('reports')) ?? new Date())
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e))
         setReport(null)
@@ -1134,6 +1138,7 @@ export default function ReportsView({ configured, conn, storeName, onGoSettings 
           <div className="page-sub">
             گزارش فروش، مشتریان، محصولات و موجودی فروشگاه «{storeName ?? 'ووکامرس'}»{' '}
             {conn.state === 'fail' ? '· اتصال برقرار نیست' : ''}
+            {reportSync ? ` · آخرین همگام‌سازی با فروشگاه در ${faTime(reportSync)}` : ''}
           </div>
         </div>
         <div className="toolbar" style={{ flexWrap: 'wrap', justifyContent: 'flex-end' }}>

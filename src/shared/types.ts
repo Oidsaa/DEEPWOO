@@ -25,6 +25,46 @@ export interface Settings {
    * below this number are flagged in the گزارشات «موجودی» tab. Default 5.
    */
   lowStockThreshold?: number
+  /**
+   * Cache lifetime (seconds) for list reads (customers, orders, products,
+   * status totals). Default 60. Bigger = faster menu switches but data may be
+   * that old until the next write or manual refresh.
+   */
+  cacheListSec?: number
+  /**
+   * Cache lifetime (seconds) for detail/history reads (order notes, customer/
+   * product order history, store stats). Default 120.
+   */
+  cacheDetailSec?: number
+  /**
+   * Cache lifetime (seconds) for heavy report scans and product catalog/
+   * detail fetches. Default 300.
+   */
+  cacheReportSec?: number
+  /**
+   * On app start the disk cache may serve snapshots at most this old (hours)
+   * before re-fetching — 0 disables stale serving entirely (strict). Default 12.
+   */
+  cacheStaleHours?: number
+}
+
+/** Cache usage stats surfaced to the UI (see the «آخرین همگام‌سازی» badge). */
+export interface CacheStatus {
+  /** Reads served from a fresh in-memory entry (no store request). */
+  hits: number
+  /** Reads that had to invoke the store loader. */
+  misses: number
+  /** Cold-start reads served from a disk snapshot (refreshed in the background). */
+  staleServes: number
+  /** Successful store fetches (fresh loads + background refreshes). */
+  fetches: number
+  /** Live cache entries (memory). */
+  size: number
+  /**
+   * Last time each endpoint prefix (customers, orders, products, reports, …)
+   * was really fetched from the store (ms epoch). Empty in the browser demo.
+   */
+  syncedAt: Record<string, number>
 }
 
 /** Minimal shape of a WooCommerce customer (/wp-json/wc/v3/customers). */
@@ -433,6 +473,8 @@ export interface ApiBridge {
    * from the store instead of serving the TTL cache.
    */
   clearCache(): Promise<{ ok: boolean }>
+  /** Cache usage stats + last real store-sync stamps (آخرین همگام‌سازی). */
+  getCacheStatus(): Promise<CacheStatus>
   /** Sales report over the last N days (store analytics). */
   getReports(query: ReportsQuery): Promise<SalesReport>
   listCustomerOrders(customerId: number): Promise<OrdersResult>

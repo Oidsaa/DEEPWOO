@@ -5,6 +5,7 @@ import type { ConnState, Order, OrderNote, OrdersListResult, OrderStatusTotal, R
 import { api, isMock } from '../api'
 import { avatarPalette, faDate, faDigits, faNum, faTime, orderStatusMeta } from '../lib/format'
 import { forceRefresh } from '../lib/refresh'
+import { lastStoreSync } from '../lib/syncStamp'
 import { bulkPostalHtml, bulkStoreHtml, bulkWarehouseHtml, RECEIPT_KINDS, type BulkReceiptDoc, type ReceiptShop } from '../lib/print'
 import BulkPrintModal from './BulkPrintModal'
 import {
@@ -40,6 +41,7 @@ export default function OrdersView({ configured, conn, storeName, onGoSettings }
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [loadCount, setLoadCount] = useState(0)
+  const [syncedAt, setSyncedAt] = useState<Date | null>(null)
   /** تعداد سفارش‌های هر وضعیت (چیپ‌های فیلتر هدر). */
   const [statusTotals, setStatusTotals] = useState<OrderStatusTotal[] | null>(null)
   const debounceRef = useRef<number | undefined>(undefined)
@@ -135,7 +137,12 @@ export default function OrdersView({ configured, conn, storeName, onGoSettings }
         perPage: params.perPage,
       })
       .then((r) => {
-        if (!cancelled) setData(r)
+        if (cancelled) return
+        setData(r)
+        // Show the REAL store-fetch time (cache-aware), not the delivery time.
+        void lastStoreSync('orders').then((d) => {
+          if (!cancelled) setSyncedAt(d ?? new Date())
+        })
       })
       .catch((e: unknown) => {
         if (!cancelled) {
@@ -287,7 +294,8 @@ export default function OrdersView({ configured, conn, storeName, onGoSettings }
               <div className="panel-title">فهرست سفارش‌ها</div>
               <div className="panel-sub">
                 {data
-                  ? `نمایش ${faNum(pageOrders.length)} سفارش از ${faNum(data.total)}`
+                  ? `نمایش ${faNum(pageOrders.length)} سفارش از ${faNum(data.total)}` +
+                    (syncedAt ? ` • همگام‌سازی با فروشگاه در ${faTime(syncedAt)}` : '')
                   : 'بارگذاری داده‌ها از فروشگاه…'}
               </div>
             </div>

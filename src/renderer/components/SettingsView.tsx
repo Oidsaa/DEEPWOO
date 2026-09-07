@@ -5,6 +5,7 @@ import { faDigits, toLatin } from '../lib/format'
 import {
   IconAlert,
   IconCheck,
+  IconClock,
   IconEye,
   IconEyeOff,
   IconLink,
@@ -352,6 +353,130 @@ export default function SettingsView({ settings, conn, onSaved }: Props) {
                 <IconTrash size={14} />
                 {armClear ? 'برای تأیید دوباره کلیک کنید' : 'پاک کردن تنظیمات'}
               </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="panel" style={{ gridColumn: '1 / -1' }}>
+          <div className="panel-head">
+            <div>
+              <div className="panel-title">سرعت و کش داده‌ها</div>
+              <div className="panel-sub">تعادل بین تازگی داده و سرعت باز شدن منوها را خودتان تنظیم کنید</div>
+            </div>
+            <div className="chip">
+              <IconClock size={13} />
+              کش WooCommerce
+            </div>
+          </div>
+
+          <div className="form-body">
+            <div className="notice info" style={{ marginTop: 0 }}>
+              <IconClock size={17} />
+              <div>
+                داده‌های خوانده‌شده از فروشگاه تا این مدت‌ها کش می‌شوند؛ با هر تغییر یا «به‌روزرسانی» در برنامه، کش همان لحظه
+                پاک می‌شود. عدد بزرگ‌تر یعنی ورود به منوها سریع‌تر و درخواست کمتر به ووکامرس، ولی ممکن است داده تا همان
+                مدت قدیمی دیده شود. پس از ذخیره، کش فعلی پاک و از نو ساخته می‌شود.
+              </div>
+            </div>
+
+            <div className="field">
+              <label className="lbl" htmlFor="cacheListSec">
+                نگهداری فهرست‌ها (ثانیه)
+              </label>
+              <input
+                id="cacheListSec"
+                className="input ltr"
+                type="number"
+                dir="ltr"
+                min={5}
+                max={86400}
+                inputMode="numeric"
+                placeholder="60"
+                value={String(form.cacheListSec ?? 60)}
+                onChange={(e) =>
+                  set('cacheListSec', e.target.value.trim() === '' ? undefined : Number(toLatin(e.target.value)))
+                }
+              />
+              <span className="f-hint">مشتریان، سفارش‌ها و محصولات — پیش‌فرض ۶۰</span>
+            </div>
+
+            <div className="field">
+              <label className="lbl" htmlFor="cacheDetailSec">
+                جزئیات و تاریخچه (ثانیه)
+              </label>
+              <input
+                id="cacheDetailSec"
+                className="input ltr"
+                type="number"
+                dir="ltr"
+                min={5}
+                max={86400}
+                inputMode="numeric"
+                placeholder="120"
+                value={String(form.cacheDetailSec ?? 120)}
+                onChange={(e) =>
+                  set('cacheDetailSec', e.target.value.trim() === '' ? undefined : Number(toLatin(e.target.value)))
+                }
+              />
+              <span className="f-hint">یادداشت‌ها، تاریخچهٔ سفارش مشتری/محصول و آمار فروشگاه — پیش‌فرض ۱۲۰</span>
+            </div>
+
+            <div className="field">
+              <label className="lbl" htmlFor="cacheReportSec">
+                گزارش‌های فروش (ثانیه)
+              </label>
+              <input
+                id="cacheReportSec"
+                className="input ltr"
+                type="number"
+                dir="ltr"
+                min={5}
+                max={86400}
+                inputMode="numeric"
+                placeholder="300"
+                value={String(form.cacheReportSec ?? 300)}
+                onChange={(e) =>
+                  set('cacheReportSec', e.target.value.trim() === '' ? undefined : Number(toLatin(e.target.value)))
+                }
+              />
+              <span className="f-hint">گزارشات، کاتالوگ و جزئیات محصول — پیش‌فرض ۳۰۰</span>
+            </div>
+
+            <div className="field">
+              <label className="lbl" htmlFor="cacheStaleHours">
+                سن مجاز کش در شروع دوبارهٔ برنامه (ساعت)
+              </label>
+              <input
+                id="cacheStaleHours"
+                className="input ltr"
+                type="number"
+                dir="ltr"
+                min={0}
+                max={168}
+                inputMode="numeric"
+                placeholder="12"
+                value={String(form.cacheStaleHours ?? 12)}
+                onChange={(e) =>
+                  set('cacheStaleHours', e.target.value.trim() === '' ? undefined : Number(toLatin(e.target.value)))
+                }
+              />
+              <span className="f-hint">
+                پس از بستن و باز کردن برنامه، دادهٔ کش تا این چند ساعتِ گذشته همان لحظه نمایش داده و در پس‌زمینه تازه می‌شود؛
+                ۰ یعنی همیشه فقط دادهٔ کاملاً تازه — پیش‌فرض ۱۲
+              </span>
+            </div>
+
+            <div className="form-actions">
+              <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving}>
+                {saving ? <IconRefresh size={16} className="spin" /> : <IconCheck size={16} />}
+                {saving ? 'در حال ذخیره…' : 'ذخیره تنظیمات کش'}
+              </button>
+              {savedFlash && (
+                <span className="save-msg">
+                  <IconCheck size={14} />
+                  ذخیره شد
+                </span>
+              )}
             </div>
           </div>
         </div>

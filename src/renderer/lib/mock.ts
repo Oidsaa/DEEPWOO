@@ -742,6 +742,10 @@ export const mockApi: ApiBridge = {
     await delay(40)
     return { ok: true }
   },
+  async getCacheStatus() {
+    await delay(20)
+    return { hits: 0, misses: 0, staleServes: 0, fetches: 0, size: 0, syncedAt: {} }
+  },
   async getSettings(): Promise<Settings> {
     await delay(120)
     return storedSettings()

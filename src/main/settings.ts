@@ -5,6 +5,16 @@ import type { Settings } from '../shared/types'
 
 const EMPTY: Settings = { siteUrl: '', consumerKey: '', consumerSecret: '' }
 
+/** Cache tuning defaults (seconds / hours) — mirrored by the Settings UI. */
+export const CACHE_DEFAULTS = { listSec: 60, detailSec: 120, reportSec: 300, staleHours: 12 } as const
+
+type CacheKind = 'list' | 'detail' | 'report'
+
+function clampNum(v: unknown, min: number, max: number, dflt: number): number {
+  const n = typeof v === 'number' && Number.isFinite(v) ? v : dflt
+  return Math.min(max, Math.max(min, Math.round(n)))
+}
+
 function file(): string {
   return path.join(app.getPath('userData'), 'settings.json')
 }
@@ -37,6 +47,10 @@ export function getSettings(): Settings {
         typeof data.lowStockThreshold === 'number' && Number.isFinite(data.lowStockThreshold)
           ? clampThreshold(data.lowStockThreshold)
           : undefined,
+      cacheListSec: clampNum(data.cacheListSec, 5, 86_400, CACHE_DEFAULTS.listSec),
+      cacheDetailSec: clampNum(data.cacheDetailSec, 5, 86_400, CACHE_DEFAULTS.detailSec),
+      cacheReportSec: clampNum(data.cacheReportSec, 5, 86_400, CACHE_DEFAULTS.reportSec),
+      cacheStaleHours: clampNum(data.cacheStaleHours, 0, 168, CACHE_DEFAULTS.staleHours),
     }
   } catch {
     return { ...EMPTY }
@@ -79,7 +93,23 @@ export function sanitizeSettings(input: Settings): Settings {
       typeof input.lowStockThreshold === 'number' && Number.isFinite(input.lowStockThreshold)
         ? clampThreshold(input.lowStockThreshold)
         : undefined,
+    cacheListSec: clampNum(input.cacheListSec, 5, 86_400, CACHE_DEFAULTS.listSec),
+    cacheDetailSec: clampNum(input.cacheDetailSec, 5, 86_400, CACHE_DEFAULTS.detailSec),
+    cacheReportSec: clampNum(input.cacheReportSec, 5, 86_400, CACHE_DEFAULTS.reportSec),
+    cacheStaleHours: clampNum(input.cacheStaleHours, 0, 168, CACHE_DEFAULTS.staleHours),
   }
+}
+
+/** Cache lifetime for one endpoint weight class, from saved settings (ms). */
+export function cacheTtlMs(settings: Settings, kind: CacheKind): number {
+  const raw = kind === 'list' ? settings.cacheListSec : kind === 'detail' ? settings.cacheDetailSec : settings.cacheReportSec
+  const sec = clampNum(raw, 5, 86_400, CACHE_DEFAULTS[kind === 'list' ? 'listSec' : kind === 'detail' ? 'detailSec' : 'reportSec'])
+  return sec * 1000
+}
+
+/** Max age of a disk snapshot served on cold start (ms) — 0 disables stale serving. */
+export function cacheStaleMs(settings: Settings): number {
+  return clampNum(settings.cacheStaleHours, 0, 168, CACHE_DEFAULTS.staleHours) * 60 * 60 * 1000
 }
 
 /** حد نصاب موجودی: عدد صحیح بین ۱ تا ۹۹۹۹ (پیش‌فرضِ UI وقتی خالی است: ۵). */
