@@ -3,11 +3,13 @@ import type {
   Customer,
   CustomerPayload,
   CustomersResult,
+  ListCustomersQuery,
   ListOrdersQuery,
   ListProductsQuery,
   Order,
   OrderNote,
   OrderNotePayload,
+  OrderPayload,
   OrdersListResult,
   OrdersResult,
   OrderStatusTotal,
@@ -18,10 +20,14 @@ import type {
   ProductPayload,
   ProductsResult,
   ProductVariation,
+  ReportsQuery,
+  SalesReport,
   StoreStats,
   VariationPatch,
 } from '../shared/types'
+import { phonesMatch } from '../shared/phone'
 import { persianMonthKey } from '../shared/persianMonth'
+import { aggregateSalesReport } from '../shared/reports'
 import { normalizeSiteUrl } from './settings'
 
 export interface WooConfig {
@@ -154,10 +160,7 @@ export async function testConnection(cfg: WooConfig): Promise<{ ok: true; totalC
  * v3 — see createCustomer() — and wc/v2 answers whenever wc/v3 does, because
  * both live behind WooCommerce's same legacy REST API module.
  */
-export async function listCustomers(
-  cfg: WooConfig,
-  query: { search?: string; page?: number; perPage?: number },
-): Promise<CustomersResult> {
+export async function listCustomers(cfg: WooConfig, query: ListCustomersQuery): Promise<CustomersResult> {
   const page = Math.max(1, query.page ?? 1)
   const perPage = Math.min(100, Math.max(1, query.perPage ?? 100))
 
@@ -170,6 +173,44 @@ export async function listCustomers(
   }
   const search = query.search?.trim()
   if (search) params.search = search
+
+  // Quick-order mobile lookup: the customers endpoint has no phone filter, so
+  // probe page 1 (newest customers) and — only when it has no match — sweep the
+  // remaining pages concurrently (bounded), matching billing phone with lenient
+  // normalization (۰۹۱۲… / +98912… / 912… are all the same number).
+  if (query.phone) {
+    const probe = await wooRequest<Customer[]>(
+      cfg,
+      'GET',
+      '/customers',
+      { page: 1, per_page: 100, orderby: 'registered_date', order: 'desc' },
+      undefined,
+      'v2',
+    )
+    const matches: Customer[] = probe.data.filter((c) => phonesMatch(c.billing?.phone, query.phone))
+    if (matches.length === 0) {
+      const total = Number(probe.headers.get('x-wp-total') ?? probe.data.length)
+      const pages = Math.min(MAX_PHONE_SCAN_PAGES, Math.max(1, Math.ceil(total / 100)))
+      if (pages > 1) {
+        const sweeps = await Promise.all(
+          Array.from({ length: pages - 1 }, (_, i) =>
+            wooRequest<Customer[]>(
+              cfg,
+              'GET',
+              '/customers',
+              { page: i + 2, per_page: 100, orderby: 'registered_date', order: 'desc' },
+              undefined,
+              'v2',
+            ),
+          ),
+        )
+        for (const sweep of sweeps) {
+          for (const c of sweep.data) if (phonesMatch(c.billing?.phone, query.phone)) matches.push(c)
+        }
+      }
+    }
+    return { customers: matches, total: matches.length, totalPages: 1, page: 1, perPage: matches.length }
+  }
 
   const { data, headers } = await wooRequest<Customer[]>(cfg, 'GET', '/customers', params, undefined, 'v2')
 
@@ -202,6 +243,8 @@ export async function listCustomers(
 const PRODUCT_STATUSES = ['publish', 'draft', 'private', 'pending']
 /** Safety cap per status while merging the "all statuses" view. */
 const MAX_PRODUCT_STATUS_PAGES = 10 // 10 × 100 = 1000 products per status
+/** Safety cap while scanning customers by phone (100 per page). */
+const MAX_PHONE_SCAN_PAGES = 25 // 25 × 100 = up to 2,500 customers scanned
 
 /**
  * Product list (GET /products), newest first.
@@ -397,6 +440,80 @@ export async function listProductOrders(cfg: WooConfig, productId: number): Prom
 export async function createCustomer(cfg: WooConfig, payload: CustomerPayload): Promise<Customer> {
   const { data } = await wooRequest<Customer>(cfg, 'POST', '/customers', {}, payload)
   return data
+}
+
+/** Create an order (POST /orders). Requires a Read/Write API key. */
+export async function createOrder(cfg: WooConfig, payload: OrderPayload): Promise<Order> {
+  const { data } = await wooRequest<Order>(cfg, 'POST', '/orders', {}, payload)
+  return data
+}
+
+/* ------------------------------------------------------------------ */
+/* Sales report (گزارش‌های فروش)                                        */
+/* ------------------------------------------------------------------ */
+
+/** Safety cap while scanning the report window (100 orders per page). */
+const MAX_REPORT_PAGES = 200 // 200 × 100 = up to 20,000 orders scanned
+
+/**
+ * Sales report for the last N days (including today): walks every page of
+ * orders in the window and aggregates revenue / counts / top products via the
+ * shared pure aggregator (same app rule as everywhere else in the app).
+ */
+export async function getSalesReports(
+  cfg: WooConfig,
+  query: ReportsQuery,
+  costs?: Record<string, number>,
+): Promise<SalesReport> {
+  const days = Math.min(365, Math.max(1, Math.round(query?.days ?? 30) || 30))
+  const now = new Date()
+  const from = new Date(now)
+  from.setHours(0, 0, 0, 0)
+  from.setDate(from.getDate() - (days - 1))
+  // The equal-length window right before the report window (the «دورهٔ قبل»).
+  const prevFrom = new Date(from)
+  prevFrom.setDate(prevFrom.getDate() - days)
+  const to = new Date(from)
+  to.setDate(to.getDate() + days) // exclusive end → includes the whole last day
+  const fromMs = from.getTime()
+  const toMs = to.getTime() - 1 // last millisecond of the final day
+
+  // Scan each window in its own capped loop so the previous period can never
+  // crowd the report's own (more recent) orders out of the page cap.
+  const scan = async (after: Date, before: Date): Promise<{ orders: Order[]; truncated: boolean }> => {
+    const out: Order[] = []
+    let page = 0
+    let totalPages = 1
+    for (;;) {
+      page += 1
+      const res = await wooRequest<Order[]>(
+        cfg,
+        'GET',
+        '/orders',
+        {
+          per_page: 100,
+          page,
+          orderby: 'date',
+          order: 'asc',
+          after: after.toISOString(),
+          before: before.toISOString(),
+        },
+      )
+      if (page === 1) totalPages = Math.max(1, Number(res.headers.get('x-wp-totalpages') ?? 1))
+      out.push(...res.data)
+      if (res.data.length < 100 || page >= totalPages || page >= MAX_REPORT_PAGES) break
+    }
+    return { orders: out, truncated: page >= MAX_REPORT_PAGES && page < totalPages }
+  }
+
+  const [cur, prev] = await Promise.all([
+    scan(from, to),
+    scan(prevFrom, from),
+  ])
+  return {
+    ...aggregateSalesReport(cur.orders, days, fromMs, toMs, costs, prev.orders),
+    truncated: cur.truncated || prev.truncated,
+  }
 }
 
 /* ------------------------------------------------------------------ */

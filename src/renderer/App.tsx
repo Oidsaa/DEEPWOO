@@ -5,6 +5,8 @@ import { DEMO_SETTINGS } from './lib/mock'
 import CustomersView from './components/CustomersView'
 import OrdersView from './components/OrdersView'
 import ProductsView from './components/ProductsView'
+import QuickOrderView from './components/QuickOrderView'
+import ReportsView from './components/ReportsView'
 import SettingsView from './components/SettingsView'
 import Sidebar from './components/Sidebar'
 
@@ -118,8 +120,24 @@ export default function App() {
             storeName={storeName}
             onGoSettings={() => setView('settings')}
           />
+        ) : view === 'quick-order' ? (
+          <QuickOrderView
+            key={`${configured}-${settings?.siteUrl ?? ''}-${conn.state}`}
+            configured={configured}
+            conn={conn}
+            storeName={storeName}
+            onGoSettings={() => setView('settings')}
+          />
         ) : view === 'products' ? (
           <ProductsView
+            key={`${configured}-${settings?.siteUrl ?? ''}-${conn.state}`}
+            configured={configured}
+            conn={conn}
+            storeName={storeName}
+            onGoSettings={() => setView('settings')}
+          />
+        ) : view === 'reports' ? (
+          <ReportsView
             key={`${configured}-${settings?.siteUrl ?? ''}-${conn.state}`}
             configured={configured}
             conn={conn}

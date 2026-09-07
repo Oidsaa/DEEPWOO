@@ -5,6 +5,8 @@ import {
   testConnection,
   listCustomers,
   createCustomer,
+  createOrder,
+  getSalesReports,
   listCustomerOrders,
   listOrders,
   listOrderStatusTotals,
@@ -25,6 +27,8 @@ import type {
   ListOrdersQuery,
   ListProductsQuery,
   OrderNotePayload,
+  OrderPayload,
+  ReportsQuery,
   PrintBulkDoc,
   PrintReceiptDoc,
   ProductPatch,
@@ -164,6 +168,30 @@ function registerIpc(): void {
     }
     try {
       return await createCustomer(cfg, payload ?? {})
+    } catch (err) {
+      throw new Error(err instanceof Error ? err.message : String(err))
+    }
+  })
+
+  ipcMain.handle('wc:order-create', async (_event, payload: OrderPayload) => {
+    const cfg = getSettings()
+    if (!cfg.siteUrl || !cfg.consumerKey || !cfg.consumerSecret) {
+      throw new Error('تنظیمات API کامل نشده است.')
+    }
+    try {
+      return await createOrder(cfg, payload ?? { line_items: [] })
+    } catch (err) {
+      throw new Error(err instanceof Error ? err.message : String(err))
+    }
+  })
+
+  ipcMain.handle('wc:reports', async (_event, query: ReportsQuery) => {
+    const cfg = getSettings()
+    if (!cfg.siteUrl || !cfg.consumerKey || !cfg.consumerSecret) {
+      throw new Error('تنظیمات API کامل نشده است.')
+    }
+    try {
+      return await getSalesReports(cfg, query ?? { days: 30 }, cfg.productCosts)
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
     }

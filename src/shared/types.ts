@@ -15,6 +15,11 @@ export interface Settings {
    * the warehouse receipt — each shop manages its own excluded note texts.
    */
   noteExclusions?: string[]
+  /**
+   * Cost of goods per product (keyed by product id, تومان per unit) — entered
+   * in تنظیمات and read by the «سود ناخالص» sales report.
+   */
+  productCosts?: Record<string, number>
 }
 
 /** Minimal shape of a WooCommerce customer (/wp-json/wc/v3/customers). */
@@ -58,6 +63,12 @@ export interface ConnectionResult {
 
 export interface ListCustomersQuery {
   search?: string
+  /**
+   * Normalized mobile lookup (quick order): scans customers for a matching
+   * billing phone. When present, pagination is ignored and every match is
+   * returned on page 1 (bounded scan).
+   */
+  phone?: string
   page?: number
   perPage?: number
 }
@@ -256,6 +267,49 @@ export interface OrdersListResult {
   perPage: number
 }
 
+/**
+ * Payload for creating an order (POST /wp-json/wc/v3/orders) from the
+ * quick-registration screen. Only product/variation ids and quantities are
+ * sent — WooCommerce computes prices, totals and variation meta itself.
+ */
+export interface OrderPayload {
+  customer_id?: number
+  customer_note?: string
+  payment_method?: string
+  payment_method_title?: string
+  /** Mark the order paid immediately (in-store cash / card-to-card sales). */
+  set_paid?: boolean
+  /** Status to create the order with (e.g. processing / pending-payment). */
+  status?: string
+  billing?: {
+    first_name?: string
+    last_name?: string
+    phone?: string
+    address_1?: string
+    address_2?: string
+    city?: string
+    state?: string
+    postcode?: string
+    country?: string
+  }
+  shipping?: {
+    first_name?: string
+    last_name?: string
+    address_1?: string
+    address_2?: string
+    city?: string
+    state?: string
+    postcode?: string
+    country?: string
+  }
+  line_items: Array<{
+    product_id: number
+    /** Required for variable products — picks the exact combination. */
+    variation_id?: number
+    quantity: number
+  }>
+}
+
 /** Document handed to the main process for BULK printing (one big HTML doc). */
 export interface PrintBulkDoc {
   type: ReceiptType
@@ -362,6 +416,10 @@ export interface ApiBridge {
   testConnection(settings?: Settings): Promise<ConnectionResult>
   listCustomers(query: ListCustomersQuery): Promise<CustomersResult>
   createCustomer(payload: CustomerPayload): Promise<Customer>
+  /** Create an order (quick registration). Requires a Read/Write API key. */
+  createOrder(payload: OrderPayload): Promise<Order>
+  /** Sales report over the last N days (store analytics). */
+  getReports(query: ReportsQuery): Promise<SalesReport>
   listCustomerOrders(customerId: number): Promise<OrdersResult>
   listOrders(query: ListOrdersQuery): Promise<OrdersListResult>
   /** Order counts per status (drives the sidebar badge + the orders filter chips). */
@@ -382,7 +440,128 @@ export interface ApiBridge {
   listProductOrders(productId: number): Promise<ProductOrdersResult>
 }
 
-export type ViewId = 'customers' | 'orders' | 'products' | 'settings'
+/** Amounts for one sales-report slice (payments / statuses). */
+export interface NamedAmount {
+  label: string
+  count: number
+  total: number
+}
+
+/** One day's sales within the report window. */
+export interface DailySale {
+  /** Local date key YYYY-MM-DD (the axis of the chart). */
+  date: string
+  total: number
+  orders: number
+}
+
+/** A sold product aggregated across the window (by revenue / units). */
+export interface TopSeller {
+  id: number
+  name: string
+  sku: string
+  units: number
+  /** Distinct orders containing the product. */
+  orders: number
+  revenue: number
+}
+
+/** One row of the «سود ناخالص» breakdown (per sold product). */
+export interface ProductProfitRow {
+  id: number
+  name: string
+  sku: string
+  units: number
+  /** Distinct orders containing the product. */
+  orders: number
+  /** فروش سطرها (خطوط سفارش) در بازه. */
+  revenue: number
+  /** قیمت تمام‌شدهٔ هر واحد از تنظیمات (تومان) — null تا وقتی ثبت نشده. */
+  unitCost: number | null
+  /** واحد × قیمت تمام‌شده — ۰ وقتی unitCost ثبت نشده. */
+  cogs: number
+  /** revenue − cogs — معتبر فقط وقتی unitCost ثبت شده باشد. */
+  profit: number
+  /** false → قیمت تمام‌شده در تنظیمات ثبت نشده (سودش محاسبه نمی‌شود). */
+  covered: boolean
+}
+
+/** Gross-profit summary of a sales-report window (from تنظیمات productCosts). */
+export interface GrossProfitSummary {
+  /** فروش کالاهایی که قیمت تمام‌شده دارند. */
+  coveredRevenue: number
+  /** فروش کالاهایی که قیمت تمام‌شده‌شان ثبت نشده. */
+  uncoveredRevenue: number
+  /** مجموع قیمت تمام‌شدهٔ کالاهای فروخته‌شده (فقط پوشش‌داده‌شده‌ها). */
+  cogs: number
+  /** سود ناخالص = coveredRevenue − cogs. */
+  grossProfit: number
+  /** درصد سود ناخالص نسبت به coveredRevenue (null وقتی پوششی نیست). */
+  marginPct: number | null
+  /** تعداد کالاهای فروخته‌شده بدون قیمت تمام‌شده. */
+  uncoveredProducts: number
+  /** ردیف‌های کالا (پوشش‌داده‌شده‌ها اول؛ سپس بدون قیمت) — تا سقف GROSS_ROWS. */
+  rows: ProductProfitRow[]
+  /** true وقتی کالاهای بیشتری از سقف ردیف‌های نمایش وجود دارند. */
+  rowsTruncated: boolean
+}
+
+/** Sales attributed to one billing city. */
+export interface CitySale {
+  city: string
+  count: number
+  total: number
+}
+
+/**
+ * Summary of the equal-length window that ends right before the report's
+ * window — the «دورهٔ قبل» basis for the growth percentages.
+ */
+export interface PreviousPeriodTotals {
+  /** ISO start of the previous window (local midnight). */
+  from: string
+  /** ISO end of the previous window (local end of day). */
+  to: string
+  revenue: number
+  orders: number
+  items: number
+}
+
+/**
+ * Store sales report computed over an order window. Money follows the app
+ * rule everywhere (failed / cancelled / refunded orders are excluded).
+ */
+export interface SalesReport {
+  /** Requested window width in days. */
+  days: number
+  /** ISO start of the window (local midnight). */
+  from: string
+  /** ISO end of the window (local end of day). */
+  to: string
+  totals: { revenue: number; orders: number; items: number }
+  /** Totals of the equal-length period right before this window. */
+  previous: PreviousPeriodTotals
+  /** Per-day revenue + order count, every day of the window (zeros filled). */
+  daily: DailySale[]
+  /** Revenue/count per payment-method title (top, desc). */
+  payments: NamedAmount[]
+  /** Revenue/count per order-status slug (top, desc). */
+  statuses: NamedAmount[]
+  /** Revenue/count per billing city (top, desc). */
+  cities: CitySale[]
+  /** Top products by revenue (then units). */
+  products: TopSeller[]
+  /** سود ناخالص بازه — از قیمت تمام‌شدهٔ تنظیمات (productCosts). */
+  profit: GrossProfitSummary
+  /** True when the scan hit the safety cap before the window ended. */
+  truncated: boolean
+}
+
+export interface ReportsQuery {
+  days: number
+}
+
+export type ViewId = 'customers' | 'quick-order' | 'orders' | 'products' | 'reports' | 'settings'
 export type ConnState =
   | { state: 'idle' }
   | { state: 'checking' }

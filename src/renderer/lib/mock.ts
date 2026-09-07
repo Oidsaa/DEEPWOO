@@ -12,7 +12,10 @@ import type {
   OrderNotePayload,
   OrdersListResult,
   OrdersResult,
+  OrderPayload,
   Product,
+  ReportsQuery,
+  SalesReport,
   ProductDetail,
   ProductOrdersResult,
   ProductPatch,
@@ -24,6 +27,8 @@ import type {
   VariationPatch,
 } from '../../shared/types'
 import { persianMonthKey } from '../../shared/persianMonth'
+import { phonesMatch } from '../../shared/phone'
+import { aggregateSalesReport } from '../../shared/reports'
 import { orderStatusMeta } from './format'
 
 /* ------------------------------------------------------------------ */
@@ -320,6 +325,38 @@ function mockVariationsOf(product: Product): ProductVariation[] {
 
 const comboLabel = (v: ProductVariation): string => v.attributes.map((a) => `${a.name}: ${a.option}`).join('، ')
 
+/**
+ * One demo order line drawn from the REAL catalog (ALL_PRODUCTS) so product
+ * ids / names / prices agree with the products view, the quick-order search
+ * and the «سود ناخالص» cost editor (settings productCosts are keyed by id).
+ */
+function demoLine(rnd: () => number): {
+  name: string
+  quantity: number
+  unit: string
+  total: string
+  sku: string
+  product_id: number
+  variation_id?: number
+} {
+  const product = ALL_PRODUCTS[Math.floor(rnd() * ALL_PRODUCTS.length)]
+  const variations = product.type === 'variable' ? mockVariationsOf(product) : []
+  const variation = variations.length ? variations[Math.floor(rnd() * variations.length)] : null
+  const quantity = 1 + Math.floor(rnd() * 3)
+  const unit = Math.round((Number(variation ? variation.price : product.price) || 800) * 100) / 100
+  const total = Math.round(unit * quantity * 100) / 100
+  const sku = variation ? variation.sku : product.sku
+  return {
+    name: variation ? `${product.name} — ${comboLabel(variation)}` : product.name,
+    quantity,
+    unit: String(unit),
+    total: String(total),
+    sku,
+    product_id: product.id,
+    ...(variation ? { variation_id: variation.id } : {}),
+  }
+}
+
 /** Deterministic orders that contain one product (incl. its variations). */
 function mockProductOrders(product: Product): ProductOrdersResult {
   const rnd = seeded(product.id * 7823 + 19)
@@ -379,21 +416,6 @@ function normalize(p: string): string {
 }
 
 /* ------------------------- order history mock ------------------------ */
-
-const PRODUCTS = [
-  'پیراهن مردانه',
-  'هودی بافت',
-  'کفش ورزشی',
-  'کیف چرم دست‌دوز',
-  'شال و روسری',
-  'عطر ۱۰۰ میل',
-  'گوشوارهٔ نقره',
-  'ساعت مچی',
-  'کتاب و دفتر',
-  'لوازم آرایشی',
-  'وسایل خانه',
-  'اسپیکر بلوتوثی',
-]
 
 const PAY_METHODS = ['زرین‌پال', 'درگاه پرداخت بانکی', 'کارت به کارت', 'پرداخت در محل', 'کیف پول']
 
@@ -481,13 +503,7 @@ function makeOrders(customer: Customer): Order[] {
 
   for (let i = 0; i < n; i++) {
     const lineCount = 1 + Math.floor(rnd() * 3)
-    const lines = Array.from({ length: lineCount }, () => {
-      const name = PRODUCTS[Math.floor(rnd() * PRODUCTS.length)]
-      const quantity = 1 + Math.floor(rnd() * 3)
-      const unit = Math.round((rnd() * 480 + 20) * 100) / 100
-      const total = Math.round(unit * quantity * 100) / 100
-      return { name, quantity, unit: String(unit), total: String(total) }
-    })
+    const lines = Array.from({ length: lineCount }, () => demoLine(rnd))
     const itemsTotal = Math.round(lines.reduce((a, l) => a + Number(l.total), 0) * 100) / 100
     const status = ORDER_STATUS[Math.floor(rnd() * ORDER_STATUS.length)]
     const frac = (n - i - rnd() * 0.7) / n
@@ -515,7 +531,15 @@ function makeOrders(customer: Customer): Order[] {
       discount_total: x.discount_total || undefined,
       shipping_total: String(shipTotal),
       customer_note: x.note,
-      line_items: lines.map((l) => ({ name: l.name, quantity: l.quantity, price: l.unit, total: l.total })),
+      line_items: lines.map((l) => ({
+        name: l.name,
+        quantity: l.quantity,
+        price: l.unit,
+        total: l.total,
+        sku: l.sku,
+        product_id: l.product_id,
+        ...(l.variation_id ? { variation_id: l.variation_id } : {}),
+      })),
       shipping_lines: [{ method_title: x.method_title, total: String(shipTotal) }],
       coupon_lines: x.coupon ? [x.coupon] : undefined,
       billing: {
@@ -548,13 +572,7 @@ function makeGuestOrders(): Order[] {
     const f = NAMES[Math.floor(rnd() * NAMES.length)]
     const l = LAST[Math.floor(rnd() * LAST.length)]
     const lineCount = 1 + Math.floor(rnd() * 2)
-    const lines = Array.from({ length: lineCount }, () => {
-      const name = PRODUCTS[Math.floor(rnd() * PRODUCTS.length)]
-      const quantity = 1 + Math.floor(rnd() * 2)
-      const unit = Math.round((rnd() * 420 + 30) * 100) / 100
-      const total = Math.round(unit * quantity * 100) / 100
-      return { name, quantity, unit: String(unit), total: String(total) }
-    })
+    const lines = Array.from({ length: lineCount }, () => demoLine(rnd))
     const itemsTotal = Math.round(lines.reduce((a, x) => a + Number(x.total), 0) * 100) / 100
     const day = Math.floor(rnd() * 620) // 0..~20 months back
     const date = new Date(now - day * 86400000 - Math.floor(rnd() * 86400000))
@@ -577,7 +595,15 @@ function makeGuestOrders(): Order[] {
       discount_total: x.discount_total || undefined,
       shipping_total: String(shipTotal),
       customer_note: x.note,
-      line_items: lines.map((l) => ({ name: l.name, quantity: l.quantity, price: l.unit, total: l.total })),
+      line_items: lines.map((l) => ({
+        name: l.name,
+        quantity: l.quantity,
+        price: l.unit,
+        total: l.total,
+        sku: l.sku,
+        product_id: l.product_id,
+        ...(l.variation_id ? { variation_id: l.variation_id } : {}),
+      })),
       shipping_lines: [{ method_title: x.method_title, total: String(shipTotal) }],
       coupon_lines: x.coupon ? [x.coupon] : undefined,
       billing: {
@@ -681,6 +707,18 @@ export const mockApi: ApiBridge = {
           v?.toLowerCase().includes(search),
         ),
       )
+    }
+    // Quick-order mobile lookup: lenient phone match, every result on page 1.
+    const phone = (query.phone ?? '').trim()
+    if (phone) {
+      const matches = ALL.filter((c) => phonesMatch(c.billing?.phone, phone))
+      return {
+        customers: matches,
+        total: matches.length,
+        totalPages: 1,
+        page: 1,
+        perPage: matches.length,
+      }
     }
     const perPage = query.perPage ?? 100
     const page = query.page ?? 1
@@ -991,5 +1029,91 @@ export const mockApi: ApiBridge = {
     ALL = [created, ...ALL]
     ordersCache = null // the new customer has no orders, but the cache also covers guest data
     return created
+  },
+  async createOrder(payload: OrderPayload): Promise<Order> {
+    await delay(800)
+    if (!isDemoSettings(storedSettings())) throw new Error(NOT_REAL_MSG)
+    const items = (payload.line_items ?? []).filter((l) => !!l.product_id && (Number(l.quantity) || 0) > 0)
+    if (!items.length) throw new Error('حداقل یک قلم کالا با تعداد معتبر وارد کنید.')
+
+    const lines = items.map((l) => {
+      const product = ALL_PRODUCTS.find((p) => p.id === l.product_id)
+      const variation =
+        l.variation_id && product ? mockVariationsOf(product).find((v) => v.id === l.variation_id) : undefined
+      const qty = Math.max(1, Math.floor(Number(l.quantity) || 1))
+      const unit = Math.round((Number(variation ? variation.price : product?.price) || 0) * 100) / 100
+      const meta_data = variation
+        ? variation.attributes.map((a) => ({ key: a.name, value: a.option, display_key: a.name, display_value: a.option }))
+        : undefined
+      return {
+        name: variation && product ? `${product.name} — ${comboLabel(variation)}` : product?.name || `محصول #${l.product_id}`,
+        quantity: qty,
+        price: String(unit),
+        total: String(Math.round(unit * qty * 100) / 100),
+        product_id: l.product_id,
+        ...(variation ? { variation_id: variation.id } : {}),
+        ...(meta_data ? { meta_data } : {}),
+      }
+    })
+    const sum = lines.reduce((a, x) => a + (Number(x.total) || 0), 0)
+    const existing = allOrders()
+    const customer = payload.customer_id ? ALL.find((c) => c.id === payload.customer_id) : undefined
+    const bill = payload.billing ?? {}
+    const now = new Date().toISOString()
+    const order: Order = {
+      id: Math.max(0, ...existing.map((o) => o.id)) + 1,
+      number: String(Math.max(0, ...existing.map((o) => Number(o.number) || 0)) + 1),
+      status: payload.status ?? 'processing',
+      date_created: now,
+      date_modified: now,
+      total: String(Math.round(sum * 100) / 100),
+      currency: '',
+      payment_method_title: (payload.payment_method_title ?? '').trim(),
+      customer_id: payload.customer_id ?? 0,
+      customer_name:
+        (customer ? `${customer.first_name} ${customer.last_name}`.trim() : '') ||
+        [bill.first_name, bill.last_name].filter(Boolean).join(' ').trim() ||
+        undefined,
+      line_items: lines,
+      billing: {
+        ...bill,
+        first_name: bill.first_name ?? customer?.first_name,
+        last_name: bill.last_name ?? customer?.last_name,
+        phone: bill.phone ?? customer?.billing.phone,
+      },
+      ...(payload.shipping ? { shipping: payload.shipping } : {}),
+    }
+    existing.unshift(order)
+    ordersCache = existing
+    return order
+  },
+  async getReports(query: ReportsQuery): Promise<SalesReport> {
+    await delay(700)
+    if (!isDemoSettings(storedSettings())) throw new Error(NOT_REAL_MSG)
+    const days = Math.min(365, Math.max(1, Math.round(query?.days ?? 30) || 30))
+    const now = new Date()
+    const from = new Date(now)
+    from.setHours(0, 0, 0, 0)
+    from.setDate(from.getDate() - (days - 1))
+    // The equal-length window right before (the «دورهٔ قبل» basis).
+    const prevFrom = new Date(from)
+    prevFrom.setDate(prevFrom.getDate() - days)
+    const to = new Date(from)
+    to.setDate(to.getDate() + days)
+    const fromMs = from.getTime()
+    const toMs = to.getTime() - 1
+    const prevFromMs = prevFrom.getTime()
+    // All demo orders were dated within the last ~2 years, so small windows
+    // naturally return only the orders that fall inside them.
+    const all = allOrders()
+    const inWindow = all.filter((o) => {
+      const t = new Date(o.date_created).getTime()
+      return t >= fromMs && t <= toMs
+    })
+    const prevWindow = all.filter((o) => {
+      const t = new Date(o.date_created).getTime()
+      return t >= prevFromMs && t < fromMs
+    })
+    return aggregateSalesReport(inWindow, days, fromMs, toMs, storedSettings().productCosts, prevWindow)
   },
 }

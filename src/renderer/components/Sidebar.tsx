@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { ConnState, ViewId } from '../../shared/types'
 import { api, isMock } from '../api'
 import { faDigits, faNum } from '../lib/format'
-import { IconBag, IconBox, IconGear, IconStore, IconUsers } from './Icons'
+import { IconBag, IconBox, IconChart, IconGear, IconPlus, IconStore, IconUsers } from './Icons'
 
 interface Props {
   view: ViewId
@@ -71,11 +71,27 @@ export default function Sidebar({ view, configured, host, conn, storeName, onNav
         </button>
         <button
           type="button"
+          className={'sb-item' + (view === 'quick-order' ? ' active' : '')}
+          onClick={() => onNavigate('quick-order')}
+        >
+          <IconPlus size={18} />
+          <span>ثبت سفارش سریع</span>
+        </button>
+        <button
+          type="button"
           className={'sb-item' + (view === 'products' ? ' active' : '')}
           onClick={() => onNavigate('products')}
         >
           <IconBox size={18} />
           <span>محصولات</span>
+        </button>
+        <button
+          type="button"
+          className={'sb-item' + (view === 'reports' ? ' active' : '')}
+          onClick={() => onNavigate('reports')}
+        >
+          <IconChart size={18} />
+          <span>گزارشات</span>
         </button>
         <button
           type="button"

@@ -25,6 +25,14 @@ export function getSettings(): Settings {
       noteExclusions: Array.isArray(data.noteExclusions)
         ? (data.noteExclusions as unknown[]).filter((x): x is string => typeof x === 'string')
         : undefined,
+      productCosts:
+        data.productCosts && typeof data.productCosts === 'object' && !Array.isArray(data.productCosts)
+          ? Object.fromEntries(
+              Object.entries(data.productCosts as Record<string, unknown>)
+                .filter(([, v]) => typeof v === 'number' && Number.isFinite(v) && v > 0)
+                .map(([k, v]) => [k, v as number]),
+            )
+          : undefined,
     }
   } catch {
     return { ...EMPTY }
@@ -57,6 +65,12 @@ export function sanitizeSettings(input: Settings): Settings {
     storeLogo: (input.storeLogo ?? '').trim() || undefined,
     // One phrase per line from the settings textarea: trimmed, non-empty, deduped.
     noteExclusions: [...new Set((input.noteExclusions ?? []).map((p) => p.trim()).filter(Boolean))],
+    // Cost of goods per product id (تومان): keep only positive finite numbers.
+    productCosts: Object.fromEntries(
+      Object.entries(input.productCosts ?? {})
+        .map(([k, v]) => [k.trim(), Number(v)])
+        .filter(([, v]) => Number.isFinite(v) && (v as number) > 0),
+    ),
   }
 }
 

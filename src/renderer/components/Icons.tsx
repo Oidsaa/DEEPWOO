@@ -54,6 +54,13 @@ export const IconGear = (p: P) => (
   </svg>
 )
 
+export const IconClock = (p: P) => (
+  <svg {...base(p)}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 7v5l3 2" />
+  </svg>
+)
+
 export const IconStore = (p: P) => (
   <svg {...base(p)}>
     <path d="M3 9l1.5-5.5h15L21 9" />
@@ -221,5 +228,14 @@ export const IconUpload = (p: P) => (
     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
     <path d="m17 8-5-5-5 5" />
     <path d="M12 3v12" />
+  </svg>
+)
+
+export const IconChart = (p: P) => (
+  <svg {...base(p)}>
+    <path d="M3 3v16a2 2 0 0 0 2 2h16" />
+    <path d="M7 15v-4" />
+    <path d="M12 15V7" />
+    <path d="M17 15v-7" />
   </svg>
 )

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import type { ConnectionResult, ConnState, Settings } from '../../shared/types'
+import type { ConnectionResult, ConnState, Product, Settings } from '../../shared/types'
 import { api } from '../api'
+import { faDigits, toLatin } from '../lib/format'
 import {
   IconAlert,
   IconCheck,
@@ -10,8 +11,10 @@ import {
   IconNote,
   IconPrint,
   IconRefresh,
+  IconSearch,
   IconShield,
   IconStore,
+  IconTag,
   IconTrash,
   IconUpload,
 } from './Icons'
@@ -68,10 +71,50 @@ export default function SettingsView({ settings, conn, onSaved }: Props) {
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<ConnectionResult | null>(null)
   const [armClear, setArmClear] = useState(false)
+  // Cost-of-goods (قیمت تمام‌شده) editor: search → rows with a cost input each.
+  const [costQuery, setCostQuery] = useState('')
+  const [costRows, setCostRows] = useState<Product[] | null>(null)
+  const [costLoading, setCostLoading] = useState(false)
+  const [costErr, setCostErr] = useState<string | null>(null)
 
   useEffect(() => {
     if (settings) setForm(settings)
   }, [settings])
+
+  // Debounced product search for the cost editor (fires on the demo/real listProducts).
+  useEffect(() => {
+    setCostErr(null)
+    if (costQuery.trim().length === 0) {
+      setCostRows(null)
+      setCostLoading(false)
+      return
+    }
+    setCostLoading(true)
+    const t = window.setTimeout(() => {
+      api
+        .listProducts({ search: costQuery.trim(), perPage: 15 })
+        .then((res) => setCostRows(res.products))
+        .catch((e) => {
+          setCostRows(null)
+          setCostErr(e instanceof Error ? e.message : String(e))
+        })
+        .finally(() => setCostLoading(false))
+    }, 380)
+    return () => window.clearTimeout(t)
+  }, [costQuery])
+
+  /** Set/update the unit cost (تومان) of one product in the settings draft. */
+  const setUnitCost = (id: number, raw: string) => {
+    const n = Number(toLatin(raw))
+    setForm((f) => {
+      const next = { ...(f.productCosts ?? {}) }
+      if (Number.isFinite(n) && n > 0) next[String(id)] = Math.round(n)
+      else delete next[String(id)]
+      return { ...f, productCosts: next }
+    })
+  }
+
+  const costCount = Object.keys(form.productCosts ?? {}).length
 
   useEffect(() => {
     if (!savedFlash) return
@@ -478,6 +521,102 @@ export default function SettingsView({ settings, conn, onSaved }: Props) {
                 نمی‌شود. یادداشت‌های سیستمی به‌هرحال چاپ نمی‌شوند. برای اعمال، «ذخیره تنظیمات» را بزنید.
               </span>
             </div>
+
+            <div className="form-actions">
+              <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving}>
+                {saving ? <IconRefresh size={16} className="spin" /> : <IconCheck size={16} />}
+                {saving ? 'در حال ذخیره…' : 'ذخیره تنظیمات'}
+              </button>
+              {savedFlash && (
+                <span className="save-msg">
+                  <IconCheck size={14} />
+                  ذخیره شد
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="panel" style={{ gridColumn: '1 / -1' }}>
+          <div className="panel-head">
+            <div>
+              <div className="panel-title">قیمت تمام‌شدهٔ کالاها</div>
+              <div className="panel-sub">
+                قیمت خرید هر کالا (تومان) — مبنای محاسبهٔ سود ناخالص در گزارشات. با جستجو کالا را پیدا و قیمت را ثبت
+                کنید.
+              </div>
+            </div>
+            <div className="chip">
+              <IconTag size={13} />
+              {faDigits(String(costCount))} کالا قیمت دارد
+            </div>
+          </div>
+
+          <div className="form-body">
+            <div className="field">
+              <label className="lbl" htmlFor="costSearch">
+                جستجوی کالا (نام یا کد)
+              </label>
+              <div className="input-wrap">
+                <input
+                  id="costSearch"
+                  className="input"
+                  type="text"
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="مثلاً: پیراهن مردانه یا SKU"
+                  value={costQuery}
+                  onChange={(e) => setCostQuery(e.target.value)}
+                />
+                <span className="eye-btn" style={{ cursor: 'default' }}>
+                  {costLoading ? <IconRefresh size={16} className="spin" /> : <IconSearch size={16} />}
+                </span>
+              </div>
+              <span className="f-hint">
+                برای هر واحد کالا قیمت خرید را وارد کنید؛ خالی گذاشتن یعنی این کالا هنوز قیمت تمام‌شده ندارد (سودش در
+                گزارش «سود ناخالص» محاسبه نمی‌شود). تغییرات با «ذخیره تنظیمات» ثبت می‌شود.
+              </span>
+            </div>
+
+            {costErr && (
+              <div className="notice err">
+                <IconAlert size={15} />
+                <div>{costErr}</div>
+              </div>
+            )}
+
+            {costRows && costRows.length > 0 && (
+              <div className="cost-rows">
+                {costRows.map((p) => {
+                  const val = form.productCosts?.[String(p.id)]
+                  return (
+                    <div className="cost-row" key={p.id}>
+                      <div className="cost-row-name">
+                        <span className="qo-match-name">{p.name}</span>
+                        {p.sku ? <span className="qo-match-sub" dir="ltr">{p.sku}</span> : null}
+                      </div>
+                      <div className="cost-row-in">
+                        <input
+                          className="input cost-input"
+                          dir="ltr"
+                          inputMode="decimal"
+                          placeholder="قیمت خرید…"
+                          value={val ? String(val) : ''}
+                          onChange={(e) => setUnitCost(p.id, e.target.value)}
+                        />
+                        <span className="f-hint">تومان</span>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+            {costRows && costRows.length === 0 && (
+              <div className="notice info">
+                <IconSearch size={15} />
+                <div>کالایی با این نام پیدا نشد.</div>
+              </div>
+            )}
 
             <div className="form-actions">
               <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving}>
