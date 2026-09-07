@@ -119,8 +119,12 @@ export function cachedRun<T>(key: string, ttlMs: number, loader: () => Promise<T
     hits += 1
     return Promise.resolve(hit.value as T)
   }
-  // Cold-start stale-while-revalidate: serve the snapshot now, refresh behind.
-  if (hit && hit.version === version && hit.staleUntil > now) {
+  // Stale-while-revalidate: the entry expired (in-session or on cold start)
+  // but is young enough to be trustworthy — serve it instantly while a
+  // background refresh re-validates it. Filter clicks and pagination thus
+  // NEVER wait for the store as long as a recent snapshot exists.
+  const staleHorizon = Math.max(hit?.staleUntil ?? 0, (hit?.at ?? 0) + STALE_MAX_MS)
+  if (hit && hit.version === version && now < staleHorizon) {
     staleServes += 1
     void refreshInBackground(key, ttlMs, loader)
     return Promise.resolve(hit.value as T)
@@ -134,6 +138,31 @@ export function cachedRun<T>(key: string, ttlMs: number, loader: () => Promise<T
     scheduleSave()
     return value
   })
+}
+
+/**
+ * Surgical update of the cached orders snapshot after a successful write:
+ * replace the order by id (status change) or prepend it (new order), so the
+ * orders list stays consistent WITHOUT invalidating the whole snapshot (a
+ * full re-walk is expensive on slow stores). Returns true when a live
+ * snapshot was patched; false means there is nothing to patch (caller should
+ * invalidate normally).
+ */
+export function patchCachedOrder<T extends { id: number; customer_name?: string }>(order: T): boolean {
+  const e = STORE.get('orders-all')
+  if (!e || e.version !== version) return false
+  const arr = e.value as Array<{ id: number; customer_name?: string }>
+  if (!Array.isArray(arr)) return false
+  const i = arr.findIndex((o) => o && o.id === order.id)
+  if (i >= 0) {
+    const old = arr[i]
+    // Keep the enriched display name — the write response usually lacks it.
+    arr[i] = order.customer_name || !old.customer_name ? order : { ...order, customer_name: old.customer_name }
+  } else {
+    arr.unshift(order)
+  }
+  scheduleSave()
+  return true
 }
 
 function refreshInBackground<T>(key: string, ttlMs: number, loader: () => Promise<T>): void {

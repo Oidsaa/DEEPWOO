@@ -4,7 +4,7 @@ import type { MouseEvent as ReactMouseEvent } from 'react'
 import type { ConnState, Order, OrderNote, OrdersListResult, OrderStatusTotal, ReceiptType } from '../../shared/types'
 import { api, isMock } from '../api'
 import { avatarPalette, faDate, faDigits, faNum, faTime, orderStatusMeta } from '../lib/format'
-import { forceRefresh } from '../lib/refresh'
+import { forceRefresh, reloadView } from '../lib/refresh'
 import { lastStoreSync } from '../lib/syncStamp'
 import { bulkPostalHtml, bulkStoreHtml, bulkWarehouseHtml, RECEIPT_KINDS, type BulkReceiptDoc, type ReceiptShop } from '../lib/print'
 import BulkPrintModal from './BulkPrintModal'
@@ -491,7 +491,7 @@ export default function OrdersView({ configured, conn, storeName, onGoSettings }
               onClose={() => setStatusOrder(null)}
               onChanged={() => {
                 setStatusOrder(null)
-                forceRefresh(setLoadCount)
+                reloadView(setLoadCount)
               }}
             />
           )}
@@ -511,7 +511,7 @@ export default function OrdersView({ configured, conn, storeName, onGoSettings }
               onClose={() => setBulkStatus(false)}
               onChanged={() => {
                 setSelectedIds(new Set())
-                forceRefresh(setLoadCount)
+                reloadView(setLoadCount)
               }}
             />
           )}

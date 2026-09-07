@@ -117,6 +117,7 @@ async function wooRequest<T>(
   params: Record<string, string | number> = {},
   payload?: unknown,
   version: ApiVersion = 'v3',
+  timeoutMs = 20000,
 ): Promise<{ data: T; headers: Headers }> {
   let res: Response
   try {
@@ -128,7 +129,7 @@ async function wooRequest<T>(
         ...(payload !== undefined ? { 'Content-Type': 'application/json' } : {}),
       },
       body: payload !== undefined ? JSON.stringify(payload) : undefined,
-      signal: AbortSignal.timeout(20000),
+      signal: AbortSignal.timeout(timeoutMs),
       redirect: 'follow',
     })
   } catch (err) {
@@ -544,6 +545,118 @@ export async function getSalesReports(
 /* Store-wide orders list (سفارش‌ها)                                    */
 /* ------------------------------------------------------------------ */
 
+/** Hard cap on pages walked when snapshotting the whole orders list. */
+const MAX_ORDER_PAGES = 200 // 200 × 100 = up to 20,000 orders
+
+/** Retries per orders page — shared hosting drops connections occasionally. */
+const PAGE_RETRIES = 3
+
+/**
+ * One page of GET /orders with a few retries and a small backoff. A transient
+ * drop on ONE page must not throw away the whole snapshot walk. The generous
+ * 60s timeout matches slow shared hosting: real stores routinely take 20s+
+ * per orders page, which a 20s timeout turns into an endless retry loop.
+ */
+async function ordersPageWithRetry(
+  cfg: WooConfig,
+  page: number,
+): Promise<{ data: Order[]; headers: Headers }> {
+  let lastErr: unknown = null
+  for (let attempt = 0; attempt < PAGE_RETRIES; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, 700 * attempt))
+    try {
+      return await wooRequest<Order[]>(
+        cfg,
+        'GET',
+        '/orders',
+        {
+          per_page: 100,
+          page,
+          orderby: 'date',
+          order: 'desc',
+        },
+        undefined,
+        'v3',
+        60000,
+      )
+    } catch (err) {
+      lastErr = err
+    }
+  }
+  throw lastErr
+}
+
+/**
+ * Snapshot of ALL the store's orders, newest first (every status included).
+ *
+ * The desktop cache keeps this under a single key ('orders-all'), so the
+ * orders page can serve status-filter, search and pagination changes LOCALLY:
+ * clicking the status chips or typing in the search box reuses the last
+ * snapshot instead of re-downloading the store. The snapshot is invalidated
+ * like any other read — by writes (bumpCacheVersion), the list TTL, or a
+ * manual «بارگذاری مجدد» (clearCaches).
+ */
+export async function fetchAllOrders(cfg: WooConfig): Promise<Order[]> {
+  const firstRes = await ordersPageWithRetry(cfg, 1)
+  const first = firstRes.data
+  // One page of 100 comes back short → the store has no more orders.
+  if (first.length < 100) {
+    return Promise.all(first.map(async (o) => ({ ...o, customer_name: await customerNameOf(cfg, o) })))
+  }
+  const totalPages = Math.min(
+    MAX_ORDER_PAGES,
+    Math.max(1, Number(firstRes.headers.get('x-wp-totalpages') ?? 1)),
+  )
+  const pages = Array.from({ length: totalPages - 1 }, (_, i) => i + 2)
+
+  // Remaining pages concurrently (bounded): each worker takes the next page.
+  const rest: Order[][] = new Array(pages.length)
+  let cursor = 0
+  await Promise.all(
+    Array.from({ length: Math.min(6, pages.length) }, async () => {
+      for (;;) {
+        const idx = cursor++
+        if (idx >= pages.length) return
+        rest[idx] = (await ordersPageWithRetry(cfg, pages[idx])).data
+      }
+    }),
+  )
+  const orders = [...first, ...rest.flat()]
+  return Promise.all(orders.map(async (o) => ({ ...o, customer_name: await customerNameOf(cfg, o) })))
+}
+
+/**
+ * Local filtering/pagination over a full orders snapshot (mirrors the demo
+ * mock): search across order number, customer name, phone and email; optional
+ * status filter; newest-first page slice.
+ */
+export function filterAndPaginateOrders(all: Order[], query: ListOrdersQuery): OrdersListResult {
+  const search = (query.search ?? '').trim().toLowerCase()
+  let list = all
+  if (search) {
+    list = list.filter(
+      (o) =>
+        String(o.number ?? o.id).toLowerCase().includes(search) ||
+        (o.customer_name ?? '').toLowerCase().includes(search) ||
+        (o.billing?.phone ?? '').toLowerCase().includes(search) ||
+        (o.billing?.email ?? '').toLowerCase().includes(search),
+    )
+  }
+  const status = (query.status ?? '').trim()
+  if (status) list = list.filter((o) => o.status === status)
+
+  const perPage = Math.min(100, Math.max(1, query.perPage ?? 50))
+  const page = Math.max(1, query.page ?? 1)
+  const start = (page - 1) * perPage
+  return {
+    orders: list.slice(start, start + perPage),
+    total: list.length,
+    totalPages: Math.max(1, Math.ceil(list.length / perPage)),
+    page,
+    perPage,
+  }
+}
+
 /** Session cache of customer display names for orders whose billing name is empty. */
 const customerNameCache = new Map<string, string>()
 
@@ -597,28 +710,8 @@ export async function listOrders(cfg: WooConfig, query: ListOrdersQuery): Promis
     return { orders, total: orders.length, totalPages: 1, page: 1, perPage: orders.length }
   }
 
-  const perPage = Math.min(100, Math.max(1, query.perPage ?? 50))
-  const page = Math.max(1, query.page ?? 1)
-  const params: Record<string, string | number> = {
-    per_page: perPage,
-    page,
-    orderby: 'date',
-    order: 'desc',
-  }
-  const search = (query.search ?? '').trim()
-  if (search) params.search = search
-  const status = (query.status ?? '').trim()
-  if (status) params.status = status
-
-  const { data, headers } = await wooRequest<Order[]>(cfg, 'GET', '/orders', params)
-  const orders = await Promise.all(data.map(async (o) => ({ ...o, customer_name: await customerNameOf(cfg, o) })))
-  return {
-    orders,
-    total: Number(headers.get('x-wp-total') ?? data.length),
-    totalPages: Math.max(1, Number(headers.get('x-wp-totalpages') ?? 1)),
-    page,
-    perPage,
-  }
+  const all = await fetchAllOrders(cfg)
+  return filterAndPaginateOrders(all, query)
 }
 
 /* ------------------------------------------------------------------ */

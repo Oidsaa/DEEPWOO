@@ -14,3 +14,12 @@ import { api } from '../api'
 export function forceRefresh(setLoadCount: Dispatch<SetStateAction<number>>): void {
   void api.clearCache().finally(() => setLoadCount((x) => x + 1))
 }
+
+/**
+ * Reload a view's data WITHOUT wiping the cache — use after a write that the
+ * main process has already applied surgically to its cached data (e.g. an
+ * order status patch). Wiping here would force a full store re-download.
+ */
+export function reloadView(setLoadCount: Dispatch<SetStateAction<number>>): void {
+  setLoadCount((x) => x + 1)
+}

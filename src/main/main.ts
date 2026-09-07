@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import path from 'node:path'
 import { getSettings, saveSettings, clearSettings, sanitizeSettings, cacheTtlMs, cacheStaleMs } from './settings'
-import { cachedRun, clearCaches, bumpCacheVersion, initCache, flushCache, cacheStatus } from './cache'
+import { cachedRun, clearCaches, bumpCacheVersion, initCache, flushCache, cacheStatus, patchCachedOrder } from './cache'
 import {
   testConnection,
   listCustomers,
@@ -10,6 +10,8 @@ import {
   getSalesReports,
   listCustomerOrders,
   listOrders,
+  fetchAllOrders,
+  filterAndPaginateOrders,
   listOrderStatusTotals,
   listOrderNotes,
   createOrderNote,
@@ -201,7 +203,9 @@ function registerIpc(): void {
     }
     try {
       const result = await createOrder(cfg, payload ?? { line_items: [] })
-      bumpCacheVersion()
+      // Surgical: prepend the new order to the cached snapshot; the orders
+      // list stays instant instead of re-walking the whole store.
+      if (!patchCachedOrder(result)) bumpCacheVersion()
       return result
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
@@ -277,7 +281,15 @@ function registerIpc(): void {
     }
     try {
       const q = query ?? {}
-      return await cachedRun(ck('orders', q), cacheTtlMs(cfg, 'list'), () => listOrders(cfg, q))
+      // Bulk print (exact ids): cache the precise fetch under its own key.
+      if (q.include && q.include.length > 0) {
+        return await cachedRun(ck('orders', q), cacheTtlMs(cfg, 'list'), () => listOrders(cfg, q))
+      }
+      // Normal list: ONE cached snapshot of all orders — status filters, search
+      // and pagination run locally, so switching chips/typing never re-downloads
+      // the store. Invalidate via writes, the list TTL, or «بارگذاری مجدد».
+      const all = await cachedRun('orders-all', cacheTtlMs(cfg, 'list'), () => fetchAllOrders(cfg))
+      return filterAndPaginateOrders(all, q)
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
     }
@@ -328,7 +340,9 @@ function registerIpc(): void {
     }
     try {
       const result = await updateOrderStatus(cfg, orderId, status)
-      bumpCacheVersion()
+      // Surgical: patch the changed order inside the cached snapshot — a full
+      // cache invalidation would force a multi-minute re-walk on slow stores.
+      if (!patchCachedOrder(result)) bumpCacheVersion()
       return result
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
