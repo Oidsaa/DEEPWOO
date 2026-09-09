@@ -41,6 +41,8 @@ const api: ApiBridge = {
   updateProduct: (productId: number, patch: ProductPatch) => ipcRenderer.invoke('wc:product-update', productId, patch),
   createProduct: (payload: ProductPayload) => ipcRenderer.invoke('wc:product-create', payload),
   listProductOrders: (productId: number) => ipcRenderer.invoke('wc:product-orders', productId),
+  getWarehousesOverview: () => ipcRenderer.invoke('warehouses:overview'),
+  saveWarehouseStock: (payload) => ipcRenderer.invoke('warehouses:save-stock', payload),
 }
 
 contextBridge.exposeInMainWorld('api', api)

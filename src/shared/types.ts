@@ -26,6 +26,14 @@ export interface Settings {
    */
   lowStockThreshold?: number
   /**
+   * انبارهای فروشگاه (کارگاه/فروشگاه و…). Each warehouse keeps its stock in
+   * the product/variation meta `_stock_{id}` and may map to a custom order
+   * status that triggers automatic allocation (تخصیص) of new orders. Stored
+   * on every device — the ids must match across devices because they name the
+   * site meta keys.
+   */
+  warehouses?: WarehouseDef[]
+  /**
    * Cache lifetime (seconds) for list reads (customers, orders, products,
    * status totals). Default 60. Bigger = faster menu switches but data may be
    * that old until the next write or manual refresh.
@@ -141,6 +149,10 @@ export interface Product {
   average_rating?: string
   rating_count?: number
   review_count?: number
+  /** Raw site meta of the product (drives the per-warehouse stock `_stock_{id}`). */
+  meta_data?: Array<{ id?: number; key: string; value: unknown }>
+  /** Per-warehouse stock parsed from the `_stock_{id}` metas (absent = ثبت‌نشده). */
+  warehouseStock?: Record<string, number>
 }
 
 export interface ProductsResult {
@@ -183,6 +195,10 @@ export interface ProductVariation {
   manage_stock: boolean
   attributes: Array<{ id: number; name: string; option: string }>
   image: { id: number; src: string; name: string } | null
+  /** Raw site meta of the combination (drives the per-warehouse stock `_stock_{id}`). */
+  meta_data?: Array<{ id?: number; key: string; value: unknown }>
+  /** Per-warehouse stock parsed from the `_stock_{id}` metas (absent = ثبت‌نشده). */
+  warehouseStock?: Record<string, number>
 }
 
 /** A product together with its variations (variations only for variable products). */
@@ -291,6 +307,10 @@ export interface Order {
   coupon_lines?: Array<{ code?: string; discount?: string }>
   /** Display name of the order's customer (billing name, or the linked account's name). */
   customer_name?: string
+  /** Raw site meta — carries the warehouse-allocation marker (`_warehouse_alloc`). */
+  meta_data?: Array<{ id?: number; key: string; value: unknown }>
+  /** Warehouse id this order's stock was allocated from, when known (app-managed marker). */
+  allocatedWarehouse?: string
 }
 
 export interface OrdersResult {
@@ -456,6 +476,93 @@ export interface StoreStats {
   computedAt: string
 }
 
+/* ------------------------------------------------------------------ */
+/* انبارها — multi-warehouse stock (per product + per combination)      */
+/* ------------------------------------------------------------------ */
+
+/** One warehouse of the store (defined in تنظیمات on every device). */
+export interface WarehouseDef {
+  /**
+   * Stable identifier — names the site meta key `_stock_{id}`, so it MUST be
+   * the same on every device (e.g. `kargah` / `forooshgah`). Latin letters,
+   * digits, dash and underscore only.
+   */
+  id: string
+  /** Persian display name (کارگاه، فروشگاه، …). */
+  name: string
+  /**
+   * Custom order status that allocates (تخصیص) new orders from this
+   * warehouse — e.g. `kargah` (تایید کارگاه). Empty = no automatic allocation.
+   */
+  orderStatus?: string
+  /** Quick-registration (سفارش سریع) orders are allocated to this warehouse. */
+  quickOrder?: boolean
+}
+
+/** One stock row of the warehouses overview (one product or one variation). */
+export interface WarehouseItemState {
+  productId: number
+  /** null → the product itself (simple products); otherwise the combination id. */
+  variationId: number | null
+  /** Product name (+ the combination label for variations). */
+  name: string
+  /** Parent product name — populated for variation rows. */
+  productName?: string
+  sku?: string
+  imageUrl?: string
+  type: string
+  status: string
+  /** Stock is managed on the site for this item (stock_quantity is numeric). */
+  manageStock: boolean
+  /** The site's own stock (ملاک) — null when stock is not managed. */
+  siteStock: number | null
+  /** Per-warehouse registered stock; a missing key or null = ثبت‌نشده. */
+  warehouseStock: Record<string, number | null>
+  /** Sum of the REGISTERED warehouses (null when nothing is registered). */
+  sum: number | null
+  /** sum − siteStock (null when nothing registered or stock not managed). */
+  delta: number | null
+}
+
+/** Full warehouses snapshot for the «انبارها» view + the sidebar badge. */
+export interface WarehousesOverview {
+  /** Canonical warehouse list from settings. */
+  warehouses: WarehouseDef[]
+  /** Every product + combination of the store (newest first). */
+  items: WarehouseItemState[]
+  /** ISO time the snapshot was computed. */
+  computedAt: string
+}
+
+/** One editable row of the انبارداری modal (a product or one combination). */
+export interface WarehouseSaveRow {
+  variationId: number | null
+  /** Absolute count per warehouse id — every warehouse must be present. */
+  values: Record<string, number>
+  /** true → the site stock_quantity is set to the sum of `values` (تأیید انبارداری). */
+  syncSite: boolean
+}
+
+/** Payload of one انبارداری save (all rows of one product at once). */
+export interface WarehouseStockSavePayload {
+  productId: number
+  rows: WarehouseSaveRow[]
+}
+
+/** Result of one saved row (read back from the site response). */
+export interface WarehouseSaveRowResult {
+  variationId: number | null
+  siteStock: number | null
+  warehouseStock: Record<string, number>
+  /** true when the site stock was changed by this save. */
+  siteSynced: boolean
+}
+
+export interface WarehouseStockSaveResult {
+  productId: number
+  rows: WarehouseSaveRowResult[]
+}
+
 /** API surface exposed to the renderer through the preload bridge. */
 export interface ApiBridge {
   getSettings(): Promise<Settings>
@@ -501,6 +608,14 @@ export interface ApiBridge {
    * report tabs need every page at once (ratings + stock alerts).
    */
   getProductCatalog(): Promise<ProductCatalog>
+  /**
+   * انبارها snapshot: every product/combination with its site stock and
+   * per-warehouse registered stock (cached like the reports — the first walk
+   * reads the variations of every variable product).
+   */
+  getWarehousesOverview(): Promise<WarehousesOverview>
+  /** ثبت انبارداری: save per-warehouse counts (+ optionally sync the site stock to their sum). */
+  saveWarehouseStock(payload: WarehouseStockSavePayload): Promise<WarehouseStockSaveResult>
 }
 
 /** Amounts for one sales-report slice (payments / statuses). */
@@ -792,7 +907,7 @@ export interface ReportsQuery {
   to?: string
 }
 
-export type ViewId = 'customers' | 'quick-order' | 'orders' | 'products' | 'reports' | 'settings'
+export type ViewId = 'customers' | 'quick-order' | 'orders' | 'products' | 'warehouses' | 'reports' | 'settings'
 export type ConnState =
   | { state: 'idle' }
   | { state: 'checking' }

@@ -9,6 +9,7 @@ import QuickOrderView from './components/QuickOrderView'
 import ReportsView from './components/ReportsView'
 import SettingsView from './components/SettingsView'
 import Sidebar from './components/Sidebar'
+import WarehousesView from './components/WarehousesView'
 
 function hostOf(url: string): string | null {
   if (!url) return null
@@ -130,6 +131,14 @@ export default function App() {
           />
         ) : view === 'products' ? (
           <ProductsView
+            key={`${configured}-${settings?.siteUrl ?? ''}-${conn.state}`}
+            configured={configured}
+            conn={conn}
+            storeName={storeName}
+            onGoSettings={() => setView('settings')}
+          />
+        ) : view === 'warehouses' ? (
+          <WarehousesView
             key={`${configured}-${settings?.siteUrl ?? ''}-${conn.state}`}
             configured={configured}
             conn={conn}

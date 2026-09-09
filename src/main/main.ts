@@ -1,7 +1,17 @@
 import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import path from 'node:path'
 import { getSettings, saveSettings, clearSettings, sanitizeSettings, cacheTtlMs, cacheStaleMs } from './settings'
-import { cachedRun, clearCaches, bumpCacheVersion, initCache, flushCache, cacheStatus, patchCachedOrder } from './cache'
+import { cachedRun, clearCaches, bumpCacheVersion, initCache, flushCache, cacheStatus, patchCachedOrder, patchCacheKeepFresh } from './cache'
+import {
+  activeWarehouses,
+  allocationForStatus,
+  allocateOrder,
+  applySaveToOverview,
+  applySaveToProductDetail,
+  saveWarehouseStock,
+  scheduleReconcile,
+  warehousesOverview,
+} from './warehouses'
 import {
   testConnection,
   listCustomers,
@@ -32,6 +42,7 @@ import type {
   ListProductsQuery,
   OrderNotePayload,
   OrderPayload,
+  ProductDetail,
   ReportsQuery,
   PrintBulkDoc,
   PrintReceiptDoc,
@@ -39,6 +50,8 @@ import type {
   ProductPayload,
   Settings,
   VariationPatch,
+  WarehousesOverview,
+  WarehouseStockSavePayload,
 } from '../shared/types'
 
 app.setName('WooCommerce-Dashboard')
@@ -206,6 +219,24 @@ function registerIpc(): void {
       // Surgical: prepend the new order to the cached snapshot; the orders
       // list stays instant instead of re-walking the whole store.
       if (!patchCachedOrder(result)) bumpCacheVersion()
+
+      // سفارش سریعِ حضوری (sale-hazouri) بلافاصله در انبارِ سفارش‌سریع تخصیص
+      // می‌خورد؛ سفارش‌های آنلاین منتظر وضعیتِ انباردار می‌مانند.
+      if (result.status === 'sale-hazouri') {
+        const quick = activeWarehouses(cfg).find((w) => w.quickOrder)
+        if (quick) {
+          try {
+            const allocated = await allocateOrder(cfg, cfg, result, quick.id)
+            if (allocated) {
+              if (!patchCachedOrder(allocated)) bumpCacheVersion()
+              return allocated
+            }
+          } catch (err) {
+            // تخصیص حیاتی نیست — گذرگاه آشتی‌گیری بعداً دوباره تلاش می‌کند.
+            console.warn('warehouse allocation failed for order', result.id, err)
+          }
+        }
+      }
       return result
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
@@ -289,6 +320,9 @@ function registerIpc(): void {
       // and pagination run locally, so switching chips/typing never re-downloads
       // the store. Invalidate via writes, the list TTL, or «بارگذاری مجدد».
       const all = await cachedRun('orders-all', cacheTtlMs(cfg, 'list'), () => fetchAllOrders(cfg))
+      // آشتی‌گیری انبار: تغییر وضعیت‌های انجام‌شده روی دستگاه انباردارها را
+      // به تخصیص/برگشت موجودی ترجمه می‌کند (fire-and-forget، با محدودیت زمانی).
+      scheduleReconcile(cfg, cfg, all)
       return filterAndPaginateOrders(all, q)
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
@@ -339,10 +373,57 @@ function registerIpc(): void {
       throw new Error('تنظیمات API کامل نشده است.')
     }
     try {
-      const result = await updateOrderStatus(cfg, orderId, status)
+      let result = await updateOrderStatus(cfg, orderId, status)
       // Surgical: patch the changed order inside the cached snapshot — a full
       // cache invalidation would force a multi-minute re-walk on slow stores.
       if (!patchCachedOrder(result)) bumpCacheVersion()
+
+      // تخصیص/برگشت انبار بلافاصله پس از تغییر وضعیت در همین دستگاه.
+      const alloc = allocationForStatus(cfg, status)
+      if (alloc !== undefined) {
+        try {
+          const allocated = await allocateOrder(cfg, cfg, result, alloc)
+          if (allocated) {
+            result = allocated
+            if (!patchCachedOrder(allocated)) bumpCacheVersion()
+          }
+        } catch (err) {
+          // تغییر وضعیت انجام شده است؛ گذرگاه آشتی‌گیری تخصیص را بعداً کامل می‌کند.
+          console.warn('warehouse allocation failed for order', orderId, err)
+        }
+      }
+      return result
+    } catch (err) {
+      throw new Error(err instanceof Error ? err.message : String(err))
+    }
+  })
+
+  ipcMain.handle('warehouses:overview', async () => {
+    const cfg = getSettings()
+    if (!cfg.siteUrl || !cfg.consumerKey || !cfg.consumerSecret) {
+      throw new Error('تنظیمات API کامل نشده است.')
+    }
+    try {
+      // ONE cached walk (products + variations of every variable product)
+      // shared by the «انبارها» view and the sidebar badge.
+      return await cachedRun('warehouses-overview', cacheTtlMs(cfg, 'report'), () => warehousesOverview(cfg, cfg))
+    } catch (err) {
+      throw new Error(err instanceof Error ? err.message : String(err))
+    }
+  })
+
+  ipcMain.handle('warehouses:save-stock', async (_event, payload: WarehouseStockSavePayload) => {
+    const cfg = getSettings()
+    if (!cfg.siteUrl || !cfg.consumerKey || !cfg.consumerSecret) {
+      throw new Error('تنظیمات API کامل نشده است.')
+    }
+    try {
+      const result = await saveWarehouseStock(cfg, cfg, payload ?? { productId: 0, rows: [] })
+      // Write → everything goes stale, but the two caches that already hold
+      // the fresh data are folded forward and stay valid (no re-walk).
+      bumpCacheVersion()
+      patchCacheKeepFresh<WarehousesOverview>('warehouses-overview', (o) => applySaveToOverview(o, result))
+      patchCacheKeepFresh<ProductDetail>(ck('product-detail', result.productId), (d) => applySaveToProductDetail(d, result))
       return result
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))

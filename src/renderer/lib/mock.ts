@@ -26,7 +26,13 @@ import type {
   Settings,
   StoreStats,
   VariationPatch,
+  WarehousesOverview,
+  WarehouseItemState,
+  WarehouseSaveRowResult,
+  WarehouseStockSavePayload,
+  WarehouseStockSaveResult,
 } from '../../shared/types'
+import { DEFAULT_WAREHOUSES, readWarehouseStock, stockMetaKey } from '../../shared/warehouses'
 import { persianMonthKey } from '../../shared/persianMonth'
 import { phonesMatch } from '../../shared/phone'
 import { aggregateSalesReport, resolveReportWindow } from '../../shared/reports'
@@ -956,6 +962,93 @@ export const mockApi: ApiBridge = {
     if (!product)
       return { orders: [], total: 0, unitsSold: 0, revenueSum: 0, excluded: 0, revenueTruncated: false, truncated: false }
     return mockProductOrders(product)
+  },
+  async getWarehousesOverview(): Promise<WarehousesOverview> {
+    await delay(600)
+    if (!isDemoSettings(storedSettings())) throw new Error(NOT_REAL_MSG)
+    const warehouses = storedSettings().warehouses?.length ? storedSettings().warehouses! : DEFAULT_WAREHOUSES
+    const ids = warehouses.map((w) => w.id)
+    const items: WarehouseItemState[] = []
+    const push = (
+      productId: number,
+      variationId: number | null,
+      node: Product | ProductVariation,
+      name: string,
+      productName: string | undefined,
+      status: string,
+      imageUrl: string | undefined,
+    ): void => {
+      const manageStock = node.manage_stock === true && typeof node.stock_quantity === 'number'
+      const siteStock =
+        node.manage_stock === true && typeof node.stock_quantity === 'number'
+          ? Math.round(node.stock_quantity)
+          : null
+      const registered = readWarehouseStock(node.meta_data, ids)
+      const warehouseStock: Record<string, number | null> = {}
+      for (const id of ids) warehouseStock[id] = typeof registered[id] === 'number' ? registered[id] : null
+      const vals = Object.values(warehouseStock).filter((v): v is number => typeof v === 'number')
+      const sum = vals.length > 0 ? vals.reduce((a, b) => a + b, 0) : null
+      items.push({
+        productId,
+        variationId,
+        name,
+        productName,
+        sku: node.sku || undefined,
+        imageUrl,
+        type: variationId === null ? 'simple' : 'variation',
+        status,
+        manageStock,
+        siteStock,
+        warehouseStock,
+        sum,
+        delta: sum !== null && siteStock !== null ? sum - siteStock : null,
+      })
+    }
+    for (const p of ALL_PRODUCTS) {
+      if (p.type === 'variable') {
+        for (const v of mockVariationsOf(p)) {
+          const label = v.attributes.map((a) => a.option).join(' / ')
+          push(p.id, v.id, v, label || v.sku, p.name, p.status, undefined)
+        }
+      } else {
+        push(p.id, null, p, p.name, undefined, p.status, undefined)
+      }
+    }
+    return { warehouses, items, computedAt: new Date().toISOString() }
+  },
+  async saveWarehouseStock(payload: WarehouseStockSavePayload): Promise<WarehouseStockSaveResult> {
+    await delay(600)
+    if (!isDemoSettings(storedSettings())) throw new Error(NOT_REAL_MSG)
+    const warehouses = storedSettings().warehouses?.length ? storedSettings().warehouses! : DEFAULT_WAREHOUSES
+    const ids = warehouses.map((w) => w.id)
+    const product = ALL_PRODUCTS.find((p) => p.id === payload?.productId)
+    if (!product) throw new Error('محصول موردنظر در فروشگاه پیدا نشد.')
+    const out: WarehouseSaveRowResult[] = []
+    for (const row of Array.isArray(payload?.rows) ? payload.rows : []) {
+      const values: Record<string, number> = {}
+      for (const id of ids) values[id] = Math.max(0, Math.round(Number(row?.values?.[id]) || 0))
+      const sum = ids.reduce((a, id) => a + values[id], 0)
+      const node: Product | ProductVariation | undefined = row.variationId
+        ? mockVariationsOf(product).find((v) => v.id === row.variationId)
+        : product
+      if (!node) throw new Error('ترکیب موردنظر پیدا نشد.')
+      const meta = (node.meta_data ?? []).filter((m) => !ids.some((id) => m.key === stockMetaKey(id)))
+      for (const id of ids) meta.push({ key: stockMetaKey(id), value: values[id] })
+      node.meta_data = meta
+      node.warehouseStock = { ...values }
+      if (row.syncSite) {
+        node.stock_quantity = sum
+        node.manage_stock = true
+        if (node.stock_status !== undefined) node.stock_status = sum === 0 ? 'outofstock' : 'instock'
+      }
+      out.push({
+        variationId: row.variationId ?? null,
+        siteStock: typeof node.stock_quantity === 'number' ? node.stock_quantity : null,
+        warehouseStock: { ...values },
+        siteSynced: row.syncSite === true,
+      })
+    }
+    return { productId: payload.productId, rows: out }
   },
   async listCustomerOrders(customerId: number): Promise<OrdersResult> {
     await delay(650)

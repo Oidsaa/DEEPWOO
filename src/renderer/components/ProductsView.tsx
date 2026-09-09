@@ -3,13 +3,14 @@ import type { ReactNode } from 'react'
 import type { ConnState, Product, ProductsResult } from '../../shared/types'
 import { api, isMock } from '../api'
 import { avatarPalette, faDate, faDigits, faNum, faTime } from '../lib/format'
-import { forceRefresh } from '../lib/refresh'
+import { forceRefresh, reloadView } from '../lib/refresh'
 import { lastStoreSync } from '../lib/syncStamp'
 import AddProductModal from './AddProductModal'
 import BulkPriceModal from './BulkPriceModal'
 import BulkStockModal from './BulkStockModal'
 import ProductDetailModal from './ProductDetailModal'
 import ProductOrdersModal from './ProductOrdersModal'
+import WarehouseStockModal from './WarehouseStockModal'
 import {
   IconAlert,
   IconBag,
@@ -22,6 +23,7 @@ import {
   IconSearch,
   IconStore,
   IconTag,
+  IconWarehouse,
   IconX,
 } from './Icons'
 
@@ -100,6 +102,7 @@ export default function ProductsView({ configured, conn, storeName, onGoSettings
   const [ordersProduct, setOrdersProduct] = useState<Product | null>(null)
   const [bulkPriceProduct, setBulkPriceProduct] = useState<Product | null>(null)
   const [bulkStockProduct, setBulkStockProduct] = useState<Product | null>(null)
+  const [warehouseProduct, setWarehouseProduct] = useState<Product | null>(null)
   const [successFlash, setSuccessFlash] = useState<string | null>(null)
 
   useEffect(() => () => window.clearTimeout(debounceRef.current), [])
@@ -414,6 +417,7 @@ export default function ProductsView({ configured, conn, storeName, onGoSettings
                         onOrders={() => setOrdersProduct(p)}
                         onBulkPrice={() => setBulkPriceProduct(p)}
                         onBulkStock={() => setBulkStockProduct(p)}
+                        onWarehouse={() => setWarehouseProduct(p)}
                       />
                     ))}
                   </tbody>
@@ -494,6 +498,15 @@ export default function ProductsView({ configured, conn, storeName, onGoSettings
           onChanged={() => forceRefresh(setLoadCount)}
         />
       )}
+
+      {warehouseProduct && (
+        <WarehouseStockModal
+          productId={warehouseProduct.id}
+          productName={warehouseProduct.name}
+          onClose={() => setWarehouseProduct(null)}
+          onChanged={() => reloadView(setLoadCount)}
+        />
+      )}
     </div>
   )
 }
@@ -504,12 +517,14 @@ function ProductRow({
   onOrders,
   onBulkPrice,
   onBulkStock,
+  onWarehouse,
 }: {
   product: Product
   onDetail: () => void
   onOrders: () => void
   onBulkPrice: () => void
   onBulkStock: () => void
+  onWarehouse: () => void
 }) {
   const pal = avatarPalette(String(product.id) + product.name)
   const meta = stockMeta(product.stock_status)
@@ -629,6 +644,15 @@ function ProductRow({
             onClick={onBulkStock}
           >
             <IconLayers size={14} />
+          </button>
+          <button
+            type="button"
+            className="btn-icon"
+            title="انبارداری — ثبت موجودی هر انبار"
+            aria-label="انبارداری"
+            onClick={onWarehouse}
+          >
+            <IconWarehouse size={14} />
           </button>
         </div>
       </td>

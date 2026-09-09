@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { ConnState, ViewId } from '../../shared/types'
 import { api, isMock } from '../api'
 import { faDigits, faNum } from '../lib/format'
-import { IconBag, IconBox, IconChart, IconGear, IconPlus, IconStore, IconUsers } from './Icons'
+import { IconBag, IconBox, IconChart, IconGear, IconPlus, IconStore, IconUsers, IconWarehouse } from './Icons'
 
 interface Props {
   view: ViewId
@@ -16,6 +16,8 @@ interface Props {
 export default function Sidebar({ view, configured, host, conn, storeName, onNavigate }: Props) {
   // سفارش‌های در حال پردازش (processing) — badge کنار منوی سفارش‌ها.
   const [processingCount, setProcessingCount] = useState<number | null>(null)
+  // اقلامِ مغایرت‌دار (مجموع انبارها ≠ موجودی سایت) — badge کنار منوی انبارها.
+  const [mismatchCount, setMismatchCount] = useState<number | null>(null)
 
   useEffect(() => {
     if (!configured) {
@@ -36,6 +38,29 @@ export default function Sidebar({ view, configured, host, conn, storeName, onNav
     }
     // Re-fetch when navigating to سفارش‌ها (a status change may have happened there)
     // and when the connection state settles.
+  }, [configured, view, conn.state])
+
+  useEffect(() => {
+    if (!configured) {
+      setMismatchCount(null)
+      return
+    }
+    let cancelled = false
+    api
+      .getWarehousesOverview()
+      .then((ov) => {
+        if (!cancelled) {
+          setMismatchCount(ov.items.filter((i) => i.delta !== null && i.delta !== 0).length)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setMismatchCount(null)
+      })
+    return () => {
+      cancelled = true
+    }
+    // Shares the cached 'warehouses-overview' snapshot — refetch on navigation
+    // (an انبارداری save or allocation may have changed it).
   }, [configured, view, conn.state])
 
   return (
@@ -84,6 +109,19 @@ export default function Sidebar({ view, configured, host, conn, storeName, onNav
         >
           <IconBox size={18} />
           <span>محصولات</span>
+        </button>
+        <button
+          type="button"
+          className={'sb-item' + (view === 'warehouses' ? ' active' : '')}
+          onClick={() => onNavigate('warehouses')}
+        >
+          <IconWarehouse size={18} />
+          <span>انبارها</span>
+          {mismatchCount !== null && mismatchCount > 0 && (
+            <span className="sb-badge sb-badge-warn" title="اقلام مغایرت‌دار با موجودی سایت">
+              {faNum(mismatchCount)}
+            </span>
+          )}
         </button>
         <button
           type="button"

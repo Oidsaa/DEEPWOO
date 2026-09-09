@@ -2,6 +2,7 @@ import { app } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
 import type { Settings } from '../shared/types'
+import { sanitizeWarehouses } from '../shared/warehouses'
 
 const EMPTY: Settings = { siteUrl: '', consumerKey: '', consumerSecret: '' }
 
@@ -47,6 +48,7 @@ export function getSettings(): Settings {
         typeof data.lowStockThreshold === 'number' && Number.isFinite(data.lowStockThreshold)
           ? clampThreshold(data.lowStockThreshold)
           : undefined,
+      warehouses: sanitizeWarehouses(data.warehouses),
       cacheListSec: clampNum(data.cacheListSec, 5, 86_400, CACHE_DEFAULTS.listSec),
       cacheDetailSec: clampNum(data.cacheDetailSec, 5, 86_400, CACHE_DEFAULTS.detailSec),
       cacheReportSec: clampNum(data.cacheReportSec, 5, 86_400, CACHE_DEFAULTS.reportSec),
@@ -93,6 +95,7 @@ export function sanitizeSettings(input: Settings): Settings {
       typeof input.lowStockThreshold === 'number' && Number.isFinite(input.lowStockThreshold)
         ? clampThreshold(input.lowStockThreshold)
         : undefined,
+    warehouses: sanitizeWarehouses(input.warehouses),
     cacheListSec: clampNum(input.cacheListSec, 5, 86_400, CACHE_DEFAULTS.listSec),
     cacheDetailSec: clampNum(input.cacheDetailSec, 5, 86_400, CACHE_DEFAULTS.detailSec),
     cacheReportSec: clampNum(input.cacheReportSec, 5, 86_400, CACHE_DEFAULTS.reportSec),

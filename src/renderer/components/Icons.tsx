@@ -70,6 +70,15 @@ export const IconStore = (p: P) => (
   </svg>
 )
 
+export const IconWarehouse = (p: P) => (
+  <svg {...base(p)}>
+    <path d="M3 21V9l9-5 9 5v12" />
+    <path d="M7 21v-8h10v8" />
+    <path d="M7 17h10" />
+    <path d="M11 13h2" />
+  </svg>
+)
+
 export const IconSearch = (p: P) => (
   <svg {...base(p)}>
     <circle cx="11" cy="11" r="7" />

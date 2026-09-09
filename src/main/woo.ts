@@ -110,7 +110,7 @@ function friendlyError(status: number | null, body: any, raw: unknown): Error {
   return new Error('خطای نامشخص هنگام ارتباط با فروشگاه (HTTP ' + (status ?? '?') + ')')
 }
 
-async function wooRequest<T>(
+export async function wooRequest<T>(
   cfg: WooConfig,
   method: string,
   path: string,
@@ -896,7 +896,7 @@ async function purchaseSumCached(cfg: WooConfig, customer: Customer): Promise<nu
 }
 
 /** Run tasks with at most `limit` in flight. */
-async function mapLimit<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+export async function mapLimit<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
   let i = 0
   const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
     while (i < items.length) {

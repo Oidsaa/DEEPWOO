@@ -165,6 +165,25 @@ export function patchCachedOrder<T extends { id: number; customer_name?: string 
   return true
 }
 
+/**
+ * Surgical update of a cached value WITHOUT invalidating it: the updater
+ * folds a fresh write result into the stored value and the entry is
+ * re-stamped with the CURRENT cache version. Call it AFTER bumpCacheVersion()
+ * for the few keys that carry their own fresh data (e.g. 'warehouses-overview'
+ * and the touched 'product-detail') — every other key goes stale as usual.
+ * Returns true when a resident entry was patched.
+ */
+export function patchCacheKeepFresh<T>(key: string, updater: (value: T) => T): boolean {
+  const e = STORE.get(key)
+  if (!e) return false
+  const next = updater(e.value as T)
+  if (next === (e.value as T)) return false
+  e.value = next
+  e.version = version
+  scheduleSave()
+  return true
+}
+
 function refreshInBackground<T>(key: string, ttlMs: number, loader: () => Promise<T>): void {
   const now = Date.now()
   if (now - (lastRefresh.get(key) ?? 0) < REFRESH_MIN_GAP_MS || inflight.has(key)) return

@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
-import type { ConnectionResult, ConnState, Product, Settings } from '../../shared/types'
+import type { ConnectionResult, ConnState, Product, Settings, WarehouseDef } from '../../shared/types'
+import { DEFAULT_WAREHOUSES, slugifyWarehouseId } from '../../shared/warehouses'
 import { api } from '../api'
-import { faDigits, toLatin } from '../lib/format'
+import { faDigits, ORDER_STATUS_META, toLatin } from '../lib/format'
 import {
   IconAlert,
   IconCheck,
@@ -10,6 +11,7 @@ import {
   IconEyeOff,
   IconLink,
   IconNote,
+  IconPlus,
   IconPrint,
   IconRefresh,
   IconSearch,
@@ -131,6 +133,40 @@ export default function SettingsView({ settings, conn, onSaved }: Props) {
 
   const set = <K extends keyof Settings>(key: K, value: Settings[K]) =>
     setForm((f) => ({ ...f, [key]: value }))
+
+  /* ---- انبارها (multi-warehouse definitions) ---- */
+
+  const warehouses: WarehouseDef[] = form.warehouses ?? DEFAULT_WAREHOUSES
+
+  const updateWh = (idx: number, patch: Partial<WarehouseDef>) => {
+    setForm((f) => ({
+      ...f,
+      warehouses: (f.warehouses ?? DEFAULT_WAREHOUSES).map((w, i) => (i === idx ? { ...w, ...patch } : w)),
+    }))
+  }
+
+  const addWh = () => {
+    setForm((f) => {
+      const list = f.warehouses ?? DEFAULT_WAREHOUSES
+      if (list.length >= 8) return f
+      return { ...f, warehouses: [...list, { id: '', name: '' }] }
+    })
+  }
+
+  const removeWh = (idx: number) => {
+    setForm((f) => ({ ...f, warehouses: (f.warehouses ?? DEFAULT_WAREHOUSES).filter((_, i) => i !== idx) }))
+  }
+
+  /** Only ONE warehouse receives the quick-order (سفارش سریع) allocations. */
+  const setQuickWh = (idx: number) => {
+    setForm((f) => ({
+      ...f,
+      warehouses: (f.warehouses ?? DEFAULT_WAREHOUSES).map((w, i) => ({
+        ...w,
+        quickOrder: i === idx ? true : undefined,
+      })),
+    }))
+  }
 
   const validate = (): string | null => {
     if (!form.siteUrl.trim()) return 'آدرس سایت را وارد کنید.'
@@ -742,6 +778,106 @@ export default function SettingsView({ settings, conn, onSaved }: Props) {
                 <div>کالایی با این نام پیدا نشد.</div>
               </div>
             )}
+
+            <div className="form-actions">
+              <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving}>
+                {saving ? <IconRefresh size={16} className="spin" /> : <IconCheck size={16} />}
+                {saving ? 'در حال ذخیره…' : 'ذخیره تنظیمات'}
+              </button>
+              {savedFlash && (
+                <span className="save-msg">
+                  <IconCheck size={14} />
+                  ذخیره شد
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="panel">
+          <div className="panel-head">
+            <div>
+              <div className="panel-title">انبارهای فروشگاه</div>
+              <div className="panel-sub">
+                موجودی هر انبار به تفکیک محصولات و ترکیبات در «انبارها» ثبت می‌شود؛ اینجا انبارها را تعریف کنید.
+              </div>
+            </div>
+          </div>
+          <div className="form-body">
+            <div className="wh-def-list">
+              {warehouses.map((w, idx) => (
+                <div className="wh-def-row" key={idx}>
+                  <div>
+                    <label className="lbl">نام انبار</label>
+                    <input
+                      className="input"
+                      value={w.name}
+                      placeholder="مثلاً انبار کارگاه"
+                      onChange={(e) => updateWh(idx, { name: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <label className="lbl">شناسه (لاتین)</label>
+                    <input
+                      className="input"
+                      dir="ltr"
+                      value={w.id}
+                      placeholder="kargah"
+                      onChange={(e) => updateWh(idx, { id: e.target.value.replace(/\s+/g, '-').toLowerCase() })}
+                      onBlur={(e) => updateWh(idx, { id: slugifyWarehouseId(e.target.value) })}
+                    />
+                  </div>
+                  <div>
+                    <label className="lbl">وضعیت سفارش این انبار</label>
+                    <select
+                      className="sel"
+                      value={w.orderStatus ?? ''}
+                      onChange={(e) => updateWh(idx, { orderStatus: e.target.value || undefined })}
+                    >
+                      <option value="">— بدون وضعیت —</option>
+                      {Object.entries(ORDER_STATUS_META).map(([slug, m]) => (
+                        <option key={slug} value={slug}>
+                          {m.fa}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="lbl">سفارش سریع</label>
+                    <label className="wh-sync">
+                      <input
+                        type="radio"
+                        name="quick-wh"
+                        checked={w.quickOrder === true}
+                        onChange={() => setQuickWh(idx)}
+                      />
+                      <span>تخصیص فروش حضوری به این انبار</span>
+                    </label>
+                  </div>
+                  <button type="button" className="btn-icon" title="حذف انبار" aria-label="حذف انبار" onClick={() => removeWh(idx)}>
+                    <IconTrash size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <div>
+              <button type="button" className="btn btn-ghost" onClick={addWh} disabled={warehouses.length >= 8}>
+                <IconPlus size={15} />
+                افزودن انبار
+              </button>
+              <span className="f-hint" style={{ marginInlineStart: 10 }}>
+                حداکثر ۸ انبار
+              </span>
+            </div>
+
+            <div className="notice amber">
+              <IconAlert size={16} />
+              <div>
+                شناسهٔ انبار نام متای موجودی روی سایت است — پس از ثبت انبارداری، تغییر آن یعنی موجودی‌های قبلی ناپدید
+                به‌نظر می‌رسند. این تعریف باید روی دستگاه همهٔ انباردارها دقیقاً یکسان باشد.
+              </div>
+            </div>
 
             <div className="form-actions">
               <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving}>
