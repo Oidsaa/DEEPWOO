@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { ConnState, ViewId } from '../../shared/types'
 import { api, isMock } from '../api'
 import { faDigits, faNum } from '../lib/format'
-import { IconBag, IconBox, IconChart, IconGear, IconPlus, IconStore, IconUsers, IconWarehouse } from './Icons'
+import { IconBag, IconBox, IconChart, IconClock, IconGear, IconPlus, IconStore, IconUsers, IconWarehouse } from './Icons'
 
 interface Props {
   view: ViewId
@@ -10,10 +10,11 @@ interface Props {
   host: string | null
   conn: ConnState
   storeName: string | null
+  userName?: string | null
   onNavigate: (view: ViewId) => void
 }
 
-export default function Sidebar({ view, configured, host, conn, storeName, onNavigate }: Props) {
+export default function Sidebar({ view, configured, host, conn, storeName, userName, onNavigate }: Props) {
   // سفارش‌های در حال پردازش (processing) — badge کنار منوی سفارش‌ها.
   const [processingCount, setProcessingCount] = useState<number | null>(null)
   // اقلامِ مغایرت‌دار (مجموع انبارها ≠ موجودی سایت) — badge کنار منوی انبارها.
@@ -133,6 +134,14 @@ export default function Sidebar({ view, configured, host, conn, storeName, onNav
         </button>
         <button
           type="button"
+          className={'sb-item' + (view === 'log' ? ' active' : '')}
+          onClick={() => onNavigate('log')}
+        >
+          <IconClock size={18} />
+          <span>لاگ تغییرات</span>
+        </button>
+        <button
+          type="button"
           className={'sb-item' + (view === 'settings' ? ' active' : '')}
           onClick={() => onNavigate('settings')}
         >
@@ -143,6 +152,11 @@ export default function Sidebar({ view, configured, host, conn, storeName, onNav
 
       <div className="sb-foot">
         {renderConnection()}
+        {userName ? (
+          <div className="sb-user" title="صاحب کلید API این دستگاه">
+            کارشناس: {userName}
+          </div>
+        ) : null}
         {isMock && <div className="mock-chip">پیش‌نمایش با دادهٔ آزمایشی</div>}
         <div className="sb-ver">نسخهٔ {faDigits('1.1')}</div>
       </div>

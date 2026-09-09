@@ -1,5 +1,8 @@
 import type {
   ApiBridge,
+  ChangeLogEntry,
+  ChangeLogQuery,
+  ChangeLogResult,
   ConnectionResult,
   Customer,
   CustomerPayload,
@@ -742,6 +745,17 @@ function mockOrderNotes(order: Order): OrderNote[] {
 /** Notes added through the app during this session (prepended to the generated ones). */
 const userOrderNotes = new Map<number, OrderNote[]>()
 
+const MOCK_LOG: ChangeLogEntry[] = [
+  { ts: Date.now() - 8 * 60_000, user: 'انباردار فروشگاه', section: 'warehouses', action: 'save', title: 'ثبت موجودی انبار — محصول #1284', details: '۳ ترکیب • همگام با سایت' },
+  { ts: Date.now() - 26 * 60_000, user: 'مدیر فروشگاه', section: 'orders', action: 'status', title: 'تغییر وضعیت سفارش #10432', details: 'وضعیت جدید: انجام شده' },
+  { ts: Date.now() - 51 * 60_000, user: 'مدیر فروشگاه', section: 'orders', action: 'create', title: 'ثبت سفارش سریع #10433', details: 'سارا محمدی • ۱٬۲۴۰٬۰۰۰ تومان' },
+  { ts: Date.now() - 2 * 3_600_000, user: 'انباردار کارگاه', section: 'warehouses', action: 'save', title: 'ثبت موجودی انبار — محصول #971', details: '۱ ترکیب' },
+  { ts: Date.now() - 3 * 3_600_000, user: 'انباردار فروشگاه', section: 'products', action: 'update', title: 'ویرایش محصول «شلوار جین راسته»', details: 'price' },
+  { ts: Date.now() - 5 * 3_600_000, user: 'مدیر فروشگاه', section: 'customers', action: 'create', title: 'افزودن مشتری', details: 'علی رضایی' },
+  { ts: Date.now() - 7 * 3_600_000, user: 'مدیر فروشگاه', section: 'settings', action: 'save', title: 'ذخیرهٔ تنظیمات' },
+  { ts: Date.now() - 9 * 3_600_000, user: 'انباردار کارگاه', section: 'warehouses', action: 'save', title: 'ثبت موجودی انبار — محصول #455', details: '۲ ترکیب • همگام با سایت' },
+]
+
 export const mockApi: ApiBridge = {
   /** Demo has no cross-view cache — every read already rebuilds fresh demo data. */
   async clearCache() {
@@ -1049,6 +1063,23 @@ export const mockApi: ApiBridge = {
       })
     }
     return { productId: payload.productId, rows: out }
+  },
+  async getChangeLog(query: ChangeLogQuery = {}): Promise<ChangeLogResult> {
+    await delay(250)
+    const perPage = Math.min(200, Math.max(10, Number(query.perPage) || 50))
+    const page = Math.max(1, Number(query.page) || 1)
+    const search = (query.search ?? '').trim().toLowerCase()
+    let list = [...MOCK_LOG].sort((a, b) => b.ts - a.ts)
+    if (query.user) list = list.filter((e) => e.user === query.user)
+    if (query.section) list = list.filter((e) => e.section === query.section)
+    if (search) {
+      list = list.filter((e) =>
+        [e.title, e.details ?? '', e.target ?? '', e.user].some((s) => s.toLowerCase().includes(search)),
+      )
+    }
+    const start = (page - 1) * perPage
+    const users = [...new Set(MOCK_LOG.map((e) => e.user))].sort((a, b) => a.localeCompare(b, 'fa'))
+    return { entries: list.slice(start, start + perPage), total: list.length, page, perPage, users }
   },
   async listCustomerOrders(customerId: number): Promise<OrdersResult> {
     await delay(650)

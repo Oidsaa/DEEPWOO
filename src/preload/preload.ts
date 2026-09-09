@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
   ApiBridge,
+  ChangeLogQuery,
   CustomerPayload,
   ListCustomersQuery,
   ListOrdersQuery,
@@ -43,6 +44,7 @@ const api: ApiBridge = {
   listProductOrders: (productId: number) => ipcRenderer.invoke('wc:product-orders', productId),
   getWarehousesOverview: () => ipcRenderer.invoke('warehouses:overview'),
   saveWarehouseStock: (payload) => ipcRenderer.invoke('warehouses:save-stock', payload),
+  getChangeLog: (query?: ChangeLogQuery) => ipcRenderer.invoke('log:query', query ?? {}),
 }
 
 contextBridge.exposeInMainWorld('api', api)

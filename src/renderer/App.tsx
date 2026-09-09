@@ -3,6 +3,7 @@ import type { ConnState, Settings, ViewId } from '../shared/types'
 import { api, bridgeMissing } from './api'
 import { DEMO_SETTINGS } from './lib/mock'
 import CustomersView from './components/CustomersView'
+import ChangeLogView from './components/ChangeLogView'
 import OrdersView from './components/OrdersView'
 import ProductsView from './components/ProductsView'
 import QuickOrderView from './components/QuickOrderView'
@@ -101,6 +102,7 @@ export default function App() {
         host={hostOf(settings?.siteUrl ?? '')}
         conn={conn}
         storeName={storeName}
+        userName={settings?.userName ?? null}
         onNavigate={setView}
       />
       <main className="main">
@@ -139,6 +141,14 @@ export default function App() {
           />
         ) : view === 'warehouses' ? (
           <WarehousesView
+            key={`${configured}-${settings?.siteUrl ?? ''}-${conn.state}`}
+            configured={configured}
+            conn={conn}
+            storeName={storeName}
+            onGoSettings={() => setView('settings')}
+          />
+        ) : view === 'log' ? (
+          <ChangeLogView
             key={`${configured}-${settings?.siteUrl ?? ''}-${conn.state}`}
             configured={configured}
             conn={conn}

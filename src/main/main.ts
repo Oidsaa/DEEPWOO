@@ -1,7 +1,10 @@
 import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import os from 'node:os'
 import path from 'node:path'
 import { getSettings, saveSettings, clearSettings, sanitizeSettings, cacheTtlMs, cacheStaleMs } from './settings'
-import { cachedRun, clearCaches, bumpCacheVersion, initCache, flushCache, cacheStatus, patchCachedOrder, patchCacheKeepFresh } from './cache'
+import { cachedRun, clearCaches, bumpCacheVersion, initCache, flushCache, cacheStatus, patchCachedOrder, patchCacheKeepFresh, getSyncMark, setSyncMark } from './cache'
+import { appendLog, initLog, queryLog, flushLog } from './log'
+import { phonesMatch } from '../shared/phone'
 import {
   activeWarehouses,
   allocationForStatus,
@@ -14,34 +17,43 @@ import {
 } from './warehouses'
 import {
   testConnection,
+  wpUsersMe,
   listCustomers,
   createCustomer,
   createOrder,
   getSalesReports,
   listCustomerOrders,
   listOrders,
-  fetchAllOrders,
+  syncOrdersSnapshot,
+  syncCustomersSnapshot,
   filterAndPaginateOrders,
   listOrderStatusTotals,
   listOrderNotes,
   createOrderNote,
   updateOrderStatus,
   listProducts,
-  getProductCatalog,
+  syncProductCatalog,
   getProductDetail,
   updateProductVariation,
   updateProduct,
   createProduct,
   listProductOrders,
   getStoreStats,
+  postChangeLog,
+  getServerChangeLog,
 } from './woo'
 import type {
+  ChangeLogQuery,
+  ChangeLogSection,
+  Customer,
   CustomerPayload,
   ListCustomersQuery,
   ListOrdersQuery,
   ListProductsQuery,
+  Order,
   OrderNotePayload,
   OrderPayload,
+  ProductCatalog,
   ProductDetail,
   ReportsQuery,
   PrintBulkDoc,
@@ -137,12 +149,69 @@ async function printViaDialog(doc: PrintableDoc): Promise<{ ok: boolean }> {
 /** Stable cache key for one IPC read (endpoint + serialized arguments). */
 const ck = (prefix: string, ...parts: unknown[]): string => prefix + ':' + JSON.stringify(parts)
 
+/** Persian label of an order status (for the change log — unknown slugs stay as-is). */
+const FA_STATUS: Record<string, string> = {
+  pending: 'در انتظار پرداخت',
+  processing: 'در حال انجام',
+  'on-hold': 'در انتظار بررسی',
+  completed: 'انجام شده',
+  cancelled: 'لغو شده',
+  refunded: 'مسترد شده',
+  failed: 'ناموفق',
+  'sale-hazouri': 'فروش حضوری',
+}
+const faStatus = (s: string): string => FA_STATUS[s] ?? s
+
+/** Record one action in the لاگ تغییرات, attributed to the کارشناس (API key owner). */
+function logAction(section: ChangeLogSection, action: string, title: string, details?: string, target?: string): void {
+  const s = getSettings()
+  appendLog({ user: s.userName?.trim() || 'نامشخص', section, action, title, details, target })
+  // Mirror to the WP-side shared log so every device sees the same لاگ — best-effort.
+  void pushChangeLog(section, action, title, details, target)
+}
+
+/** Fire-and-forget mirror of one log entry to the «WC App Change Log» plugin. */
+async function pushChangeLog(
+  section: ChangeLogSection,
+  action: string,
+  title: string,
+  details?: string,
+  target?: string,
+): Promise<void> {
+  const cfg = getSettings()
+  if (!cfg.siteUrl || !cfg.consumerKey || !cfg.consumerSecret) return
+  try {
+    await postChangeLog(cfg, { section, action, title, details, target, device: os.hostname() })
+  } catch {
+    /* پلاگین نصب نیست یا سایت در دسترس نیست — لاگ لوکال همچنان ردیف را دارد */
+  }
+}
+
+/**
+ * Resolve + persist the display name of the API key's WordPress owner
+ * (wp/v2/users/me). Called after a successful connection test and on startup;
+ * failure keeps whatever name exists (or «نامشخص»).
+ */
+async function resolveUserName(): Promise<void> {
+  const cfg = getSettings()
+  if (!cfg.siteUrl || !cfg.consumerKey || !cfg.consumerSecret) return
+  try {
+    const me = await wpUsersMe(cfg)
+    if (!me.name) return
+    const s = getSettings()
+    if (s.userName !== me.name) saveSettings({ ...s, userName: me.name })
+  } catch {
+    /* old store or security plugin — keep the existing name */
+  }
+}
+
 function registerIpc(): void {
   ipcMain.handle('settings:get', () => getSettings())
 
   ipcMain.handle('settings:save', (_event, raw: Settings) => {
     const settings = sanitizeSettings(raw)
     saveSettings(settings)
+    logAction('settings', 'settings-save', 'ذخیرهٔ تنظیمات')
     // تنظیمات روی گزارش‌ها/هزینه‌ها اثر می‌گذارد — کش بعدی باید تازه باشد.
     bumpCacheVersion()
     return { ok: true }
@@ -158,11 +227,27 @@ function registerIpc(): void {
   ipcMain.handle('cache:clear', () => {
     clearCaches()
     bumpCacheVersion()
+    logAction('system', 'cache-refresh', 'به‌روزرسانی دستی داده‌ها')
     return { ok: true }
   })
 
   // نشانگر «آخرین همگام‌سازی» در سربرگ هر نما: زمان واقعی آخرین دریافت از فروشگاه.
   ipcMain.handle('cache:status', () => cacheStatus())
+
+  // لاگ تغییرات: اول از جدول مشترک روی سایت (پلاگین) خوانده می‌شود تا همهٔ
+  // دستگاه‌ها یکجا دیده شوند؛ در نبود پلاگین/اتصال، لاگ لوکال همین دستگاه.
+  ipcMain.handle('log:query', async (_event, q: ChangeLogQuery) => {
+    const query = q ?? {}
+    const s = getSettings()
+    if (s.siteUrl && s.consumerKey && s.consumerSecret) {
+      try {
+        return await getServerChangeLog(s, query)
+      } catch {
+        /* پلاگین نصب نیست یا خطای شبکه → لاگ لوکال */
+      }
+    }
+    return queryLog(query)
+  })
 
   ipcMain.handle('wc:test', async (_event, override?: Settings) => {
     const cfg = override && override.siteUrl && override.consumerKey && override.consumerSecret
@@ -173,6 +258,8 @@ function registerIpc(): void {
     }
     try {
       const result = await testConnection(cfg)
+      // نام کارشناس (صاحب کلید) را تازه کن — مبنای «لاگ تغییرات».
+      void resolveUserName()
       return {
         ok: true,
         message: 'اتصال برقرار شد — ' + result.totalCustomers.toLocaleString('fa-IR') + ' مشتری در فروشگاه موجود است.',
@@ -189,6 +276,22 @@ function registerIpc(): void {
     }
     try {
       const q = query ?? {}
+      // جست‌وجوی موبایل (ثبت سفارش سریع): تطبیق از اسنپ‌شاتِ محلی مشتریان — آنی
+      // و بدون فشار به هاست. اسنپ‌شات به‌صورت افزایشی تازه می‌شود (پروبِ صفحات
+      // جدید ثبت‌نام) و «بارگذاری مجدد» آن را کامل بازسازی می‌کند.
+      if (q.phone) {
+        const all = await cachedRun('customers-all', cacheTtlMs(cfg, 'list'), (prev?: Customer[]) =>
+          syncCustomersSnapshot(cfg, prev),
+        )
+        const matches = all.filter((c) => phonesMatch(c.billing?.phone, q.phone))
+        return {
+          customers: matches,
+          total: matches.length,
+          totalPages: 1,
+          page: 1,
+          perPage: Math.max(1, matches.length),
+        }
+      }
       return await cachedRun(ck('customers', q), cacheTtlMs(cfg, 'list'), () => listCustomers(cfg, q))
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
@@ -203,6 +306,13 @@ function registerIpc(): void {
     try {
       const result = await createCustomer(cfg, payload ?? {})
       bumpCacheVersion()
+      logAction(
+        'customers',
+        'customer-create',
+        'افزودن مشتری',
+        [result.first_name, result.last_name].filter(Boolean).join(' ').trim() || '#' + result.id,
+        '#' + result.id,
+      )
       return result
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
@@ -219,6 +329,18 @@ function registerIpc(): void {
       // Surgical: prepend the new order to the cached snapshot; the orders
       // list stays instant instead of re-walking the whole store.
       if (!patchCachedOrder(result)) bumpCacheVersion()
+      logAction(
+        'orders',
+        'order-create',
+        'ثبت سفارش سریع #' + (result.number ?? result.id),
+        [
+          result.customer_name || [result.billing?.first_name, result.billing?.last_name].filter(Boolean).join(' ').trim(),
+          result.total ? result.total + ' تومان' : '',
+        ]
+          .filter(Boolean)
+          .join(' • '),
+        '#' + result.id,
+      )
 
       // سفارش سریعِ حضوری (sale-hazouri) بلافاصله در انبارِ سفارش‌سریع تخصیص
       // می‌خورد؛ سفارش‌های آنلاین منتظر وضعیتِ انباردار می‌مانند.
@@ -287,7 +409,14 @@ function registerIpc(): void {
       throw new Error('تنظیمات API کامل نشده است.')
     }
     try {
-      return await cachedRun('product-catalog', cacheTtlMs(cfg, 'report'), () => getProductCatalog(cfg))
+      // همگام‌سازی افزایشی: فقط محصولاتِ تغییرکرده بعد از آخرین همگام‌سازی
+      // دانلود می‌شوند؛ حذف‌ها با اسکن ارزان id و ادغام idempotent اعمال می‌شوند.
+      return await cachedRun('product-catalog', cacheTtlMs(cfg, 'report'), async (prev?: ProductCatalog) => {
+        const mark = prev && prev.products.length > 0 ? getSyncMark('product-catalog') : undefined
+        const { value, since } = await syncProductCatalog(cfg, prev, mark)
+        setSyncMark('product-catalog', since)
+        return value
+      })
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
     }
@@ -319,7 +448,15 @@ function registerIpc(): void {
       // Normal list: ONE cached snapshot of all orders — status filters, search
       // and pagination run locally, so switching chips/typing never re-downloads
       // the store. Invalidate via writes, the list TTL, or «بارگذاری مجدد».
-      const all = await cachedRun('orders-all', cacheTtlMs(cfg, 'list'), () => fetchAllOrders(cfg))
+      // همگام‌سازی افزایشی: فقط سفارش‌های تغییرکرده بعد از آخرین همگام‌سازی
+      // دانلود می‌شوند (modified_after)؛ اسنپ‌شات قبلی برای ادغام به لودر پاس
+      // می‌شود و «بارگذاری مجدد» همیشه یک پایه‌گذاری کامل (baseline) است.
+      const all = await cachedRun('orders-all', cacheTtlMs(cfg, 'list'), async (prev?: Order[]) => {
+        const mark = prev && prev.length > 0 ? getSyncMark('orders-all') : undefined
+        const { value, since } = await syncOrdersSnapshot(cfg, prev, mark)
+        setSyncMark('orders-all', since)
+        return value
+      })
       // آشتی‌گیری انبار: تغییر وضعیت‌های انجام‌شده روی دستگاه انباردارها را
       // به تخصیص/برگشت موجودی ترجمه می‌کند (fire-and-forget، با محدودیت زمانی).
       scheduleReconcile(cfg, cfg, all)
@@ -359,8 +496,9 @@ function registerIpc(): void {
       throw new Error('تنظیمات API کامل نشده است.')
     }
     try {
-      const result = await createOrderNote(cfg, orderId, payload ?? {})
+      const result = await createOrderNote(cfg, orderId, payload ?? { note: '' })
       bumpCacheVersion()
+      logAction('orders', 'order-note', `یادداشت سفارش #${orderId}`, String(payload?.note ?? '').slice(0, 120), '#' + orderId)
       return result
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
@@ -392,6 +530,7 @@ function registerIpc(): void {
           console.warn('warehouse allocation failed for order', orderId, err)
         }
       }
+      logAction('orders', 'order-status', `تغییر وضعیت سفارش #${orderId}`, 'وضعیت جدید: ' + faStatus(status), '#' + orderId)
       return result
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
@@ -424,6 +563,13 @@ function registerIpc(): void {
       bumpCacheVersion()
       patchCacheKeepFresh<WarehousesOverview>('warehouses-overview', (o) => applySaveToOverview(o, result))
       patchCacheKeepFresh<ProductDetail>(ck('product-detail', result.productId), (d) => applySaveToProductDetail(d, result))
+      logAction(
+        'warehouses',
+        'stock-save',
+        `ثبت موجودی انبار — محصول #${result.productId}`,
+        `${result.rows.length} ترکیب` + (result.rows.some((r) => r.siteSynced) ? ' • همگام با سایت' : ''),
+        '#' + result.productId,
+      )
       return result
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
@@ -450,6 +596,13 @@ function registerIpc(): void {
     try {
       const result = await updateProductVariation(cfg, productId, variationId, patch ?? {})
       bumpCacheVersion()
+      logAction(
+        'products',
+        'variation-update',
+        `ویرایش ترکیب محصول #${productId}`,
+        'ترکیب #' + variationId + ' • ' + Object.keys(patch ?? {}).join('، '),
+        '#' + productId,
+      )
       return result
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
@@ -464,6 +617,7 @@ function registerIpc(): void {
     try {
       const result = await updateProduct(cfg, productId, patch ?? {})
       bumpCacheVersion()
+      logAction('products', 'product-update', `ویرایش محصول «${result.name}»`, Object.keys(patch ?? {}).join('، '), '#' + result.id)
       return result
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
@@ -478,6 +632,7 @@ function registerIpc(): void {
     try {
       const result = await createProduct(cfg, payload ?? {})
       bumpCacheVersion()
+      logAction('products', 'product-create', `افزودن محصول «${result.name}»`, undefined, '#' + result.id)
       return result
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
@@ -515,8 +670,11 @@ app.whenReady().then(() => {
   // Hydrate the persisted WooCommerce response cache before any IPC read runs.
   // TTLs and the cold-start stale shelf come from the user's Settings (تنظیمات).
   initCache(path.join(app.getPath('userData'), 'wc-cache.json'), cacheStaleMs(getSettings()))
+  initLog(app.getPath('userData'))
   registerIpc()
   createWindow()
+  // نام کارشناس (صاحب کلید API) را در پس‌زمینه تازه کن — مبنای «لاگ تغییرات».
+  void resolveUserName()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -527,5 +685,8 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
-// Persist the latest cache snapshot when the app exits.
-app.on('will-quit', () => flushCache())
+// Persist the latest cache + change-log snapshots when the app exits.
+app.on('will-quit', () => {
+  flushLog()
+  flushCache()
+})

@@ -11,6 +11,11 @@ export interface Settings {
   /** Store logo as a data URL (read from a local image file). */
   storeLogo?: string
   /**
+   * نام کارشناس فعال: نام نمایشیِ صاحبِ کلید API (از خود سایت با wp/v2/users/me
+   * خوانده می‌شود) که در «لاگ تغییرات» به هر اکشن چسبانده می‌شود.
+   */
+  userName?: string
+  /**
    * Phrases (one per entry) whose containing order notes are NOT printed on
    * the warehouse receipt — each shop manages its own excluded note texts.
    */
@@ -145,6 +150,8 @@ export interface Product {
   categories: Array<{ id: number; name: string; slug: string }>
   images: Array<{ id: number; src: string; name: string }>
   date_created: string
+  /** GMT modification stamp — drives the incremental (modified_after) sync. */
+  date_modified_gmt?: string
   /** Product reviews (read-only from the store catalog — drives «محصولات دارای بیشترین امتیاز»). */
   average_rating?: string
   rating_count?: number
@@ -264,6 +271,8 @@ export interface Order {
   status: string
   date_created: string
   date_modified?: string
+  /** GMT modification stamp — drives the incremental (modified_after) sync. */
+  date_modified_gmt?: string
   total: string
   currency: string
   payment_method_title: string
@@ -563,6 +572,43 @@ export interface WarehouseStockSaveResult {
   rows: WarehouseSaveRowResult[]
 }
 
+/** بخش برنامه‌ای که یک ردیف لاگ به آن تعلق دارد. */
+export type ChangeLogSection = 'orders' | 'products' | 'customers' | 'warehouses' | 'settings' | 'system'
+
+/**
+ * One logged action: WHO (کارشناس = the API key's owner) did WHAT (title +
+ * details) on WHICH section, WHEN (ts, ms epoch). Written by the desktop app
+ * for every write action it performs through the store API.
+ */
+export interface ChangeLogEntry {
+  ts: number
+  user: string
+  section: ChangeLogSection
+  action: string
+  title: string
+  details?: string
+  target?: string
+}
+
+export interface ChangeLogQuery {
+  page?: number
+  perPage?: number
+  search?: string
+  /** فقط کارشناس خاص (خالی = همه). */
+  user?: string
+  /** فقط بخش خاص (خالی = همه). */
+  section?: ChangeLogSection | ''
+}
+
+export interface ChangeLogResult {
+  entries: ChangeLogEntry[]
+  total: number
+  page: number
+  perPage: number
+  /** کاربران حاضر در لاگ — برای فیلتر. */
+  users: string[]
+}
+
 /** API surface exposed to the renderer through the preload bridge. */
 export interface ApiBridge {
   getSettings(): Promise<Settings>
@@ -616,6 +662,8 @@ export interface ApiBridge {
   getWarehousesOverview(): Promise<WarehousesOverview>
   /** ثبت انبارداری: save per-warehouse counts (+ optionally sync the site stock to their sum). */
   saveWarehouseStock(payload: WarehouseStockSavePayload): Promise<WarehouseStockSaveResult>
+  /** لاگ تغییرات: paged/filtered record of every write action performed in the app. */
+  getChangeLog(query?: ChangeLogQuery): Promise<ChangeLogResult>
 }
 
 /** Amounts for one sales-report slice (payments / statuses). */
@@ -907,7 +955,7 @@ export interface ReportsQuery {
   to?: string
 }
 
-export type ViewId = 'customers' | 'quick-order' | 'orders' | 'products' | 'warehouses' | 'reports' | 'settings'
+export type ViewId = 'customers' | 'quick-order' | 'orders' | 'products' | 'warehouses' | 'reports' | 'log' | 'settings'
 export type ConnState =
   | { state: 'idle' }
   | { state: 'checking' }

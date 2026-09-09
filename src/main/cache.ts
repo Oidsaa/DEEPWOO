@@ -52,10 +52,12 @@ interface DiskFile {
   version: number
   savedAt: number
   entries: DiskEntry[]
+  /** Incremental-sync cursors per cache key (see syncMarks). */
+  marks?: Record<string, number>
 }
 
 /** Bump when the on-disk format changes (old files are ignored). */
-const SCHEMA = 1
+const SCHEMA = 2
 /** Oldest disk snapshot we are willing to serve on a cold start. */
 const STALE_MAX_MS = 12 * 60 * 60 * 1000 // 12h
 /** Debounce between cache mutations and their disk snapshot. */
@@ -77,6 +79,25 @@ let misses = 0
 let staleServes = 0
 let fetches = 0
 const syncedAt = new Map<string, number>()
+
+/**
+ * Incremental-sync cursors (ms epoch) per cache key. They survive version
+ * bumps (external changes are picked up by the next modified_after delta) but
+ * are cleared together with the values on a manual refresh (clearCaches) so
+ * the next sync re-baselines with a full walk. Persisted alongside the entries.
+ */
+const syncMarks = new Map<string, number>()
+
+/** Last incremental-sync cursor stored for `key` (undefined → full fetch). */
+export function getSyncMark(key: string): number | undefined {
+  return syncMarks.get(key)
+}
+
+/** Store the new sync cursor for `key` (call after a successful sync only). */
+export function setSyncMark(key: string, atMs: number): void {
+  syncMarks.set(key, atMs)
+  scheduleSave()
+}
 
 /** Snapshot of the cache statistics shown by the status IPC / UI badge. */
 export interface CacheStatus {
@@ -111,8 +132,15 @@ function prefixOf(key: string): string {
   return i > 0 ? key.slice(0, i) : key
 }
 
-/** Run `loader`, serving a still-fresh entry when one exists for `key`. */
-export function cachedRun<T>(key: string, ttlMs: number, loader: () => Promise<T>): Promise<T> {
+/**
+ * Run `loader`, serving a still-fresh entry when one exists for `key`. On a
+ * miss (and on background revalidations) the loader receives the PREVIOUS
+ * value — `undefined` when none exists — so snapshot loaders can merge
+ * incremental changes (modified_after deltas) instead of re-downloading the
+ * whole store. The previous value is passed even when version-stale: a write
+ * invalidates freshness, not the data itself.
+ */
+export function cachedRun<T>(key: string, ttlMs: number, loader: (prev?: T) => Promise<T>): Promise<T> {
   const now = Date.now()
   const hit = STORE.get(key)
   if (hit && hit.version === version && now < hit.expiresAt) {
@@ -130,7 +158,7 @@ export function cachedRun<T>(key: string, ttlMs: number, loader: () => Promise<T
     return Promise.resolve(hit.value as T)
   }
   misses += 1
-  return loader().then((value) => {
+  return loader(hit?.value as T | undefined).then((value) => {
     fetches += 1
     syncedAt.set(prefixOf(key), Date.now())
     STORE.set(key, { value, expiresAt: Date.now() + ttlMs, staleUntil: 0, version, at: Date.now() })
@@ -184,12 +212,12 @@ export function patchCacheKeepFresh<T>(key: string, updater: (value: T) => T): b
   return true
 }
 
-function refreshInBackground<T>(key: string, ttlMs: number, loader: () => Promise<T>): void {
+function refreshInBackground<T>(key: string, ttlMs: number, loader: (prev?: T) => Promise<T>): void {
   const now = Date.now()
   if (now - (lastRefresh.get(key) ?? 0) < REFRESH_MIN_GAP_MS || inflight.has(key)) return
   inflight.set(
     key,
-    loader()
+    loader(STORE.get(key)?.value as T | undefined)
       .then((value) => {
         fetches += 1
         syncedAt.set(prefixOf(key), Date.now())
@@ -209,6 +237,9 @@ function refreshInBackground<T>(key: string, ttlMs: number, loader: () => Promis
 /** Drop every cached entry immediately (manual «به‌روزرسانی» / force resync). */
 export function clearCaches(): void {
   STORE.clear()
+  // Sync cursors go too: the next read must re-baseline with a FULL walk so a
+  // manual refresh is a genuine resync, not a delta on top of unknown state.
+  syncMarks.clear()
   scheduleSave()
 }
 
@@ -236,12 +267,16 @@ export function bumpCacheVersion(): void {
 export function initCache(file: string, shelfMs: number = STALE_MAX_MS): void {
   filePath = file
   STORE.clear()
+  syncMarks.clear()
   const shelf = shelfMs > 0 ? shelfMs : 0
   try {
     const raw = fs.readFileSync(file, 'utf8')
     const data = JSON.parse(raw) as Partial<DiskFile>
     if (!data || data.schema !== SCHEMA || !Array.isArray(data.entries)) return
     version = typeof data.version === 'number' && Number.isInteger(data.version) && data.version >= 0 ? data.version : 0
+    for (const [k, v] of Object.entries(data.marks ?? {})) {
+      if (Number.isFinite(v)) syncMarks.set(k, v)
+    }
     const now = Date.now()
     for (const e of data.entries) {
       if (!e || typeof e.k !== 'string') continue
@@ -287,7 +322,13 @@ function saveNow(): void {
       if (now >= e.expiresAt && now >= e.staleUntil) continue
       entries.push({ k, value: e.value, expiresAt: e.expiresAt, staleUntil: e.staleUntil, version: e.version, at: e.at })
     }
-    const data: DiskFile = { schema: SCHEMA, version, savedAt: now, entries }
+    const data: DiskFile = {
+      schema: SCHEMA,
+      version,
+      savedAt: now,
+      entries,
+      ...(syncMarks.size > 0 ? { marks: Object.fromEntries(syncMarks) } : {}),
+    }
     const tmp = filePath + '.tmp'
     fs.mkdirSync(path.dirname(filePath), { recursive: true })
     fs.writeFileSync(tmp, JSON.stringify(data), 'utf8')

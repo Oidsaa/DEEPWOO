@@ -1,5 +1,8 @@
 import crypto from 'node:crypto'
 import type {
+  ChangeLogQuery,
+  ChangeLogResult,
+  ChangeLogSection,
   Customer,
   CustomerPayload,
   CustomersResult,
@@ -42,10 +45,16 @@ function enc(s: string): string {
   return encodeURIComponent(s).replace(/[!'()*]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase())
 }
 
-/** WooCommerce API versions are individually addressable; wc/v3 is the default. */
-type ApiVersion = 'v2' | 'v3'
+/**
+ * WooCommerce API versions are individually addressable; wc/v3 is the default.
+ * 'wp' addresses the CORE WordPress REST API (/wp-json/wp/v2/…) — used to
+ * identify the WordPress user who owns the API key (wp/v2/users/me), because
+ * WooCommerce's OAuth filter authenticates every wp-json request.
+ */
+type ApiVersion = 'v2' | 'v3' | 'wp'
 
 function restBase(siteUrl: string, version: ApiVersion = 'v3'): string {
+  if (version === 'wp') return normalizeSiteUrl(siteUrl) + '/wp-json'
   return normalizeSiteUrl(siteUrl) + '/wp-json/wc/' + version
 }
 
@@ -155,6 +164,58 @@ export async function testConnection(cfg: WooConfig): Promise<{ ok: true; totalC
 }
 
 /**
+ * Display name + id of the WordPress user who owns the API key. Every
+ * WooCommerce API key is bound to a WP user, so per-کارشناس keys resolve to
+ * per-کارشناس names — the attribution basis of the «لاگ تغییرات».
+ * Returns an empty name when the store refuses the core endpoint (very old
+ * WooCommerce or a security plugin) — the caller falls back gracefully.
+ */
+export async function wpUsersMe(cfg: WooConfig): Promise<{ id: number; name: string }> {
+  const { data } = await wooRequest<{ id?: number; name?: string }>(
+    cfg,
+    'GET',
+    '/wp/v2/users/me',
+    { context: 'edit' },
+    undefined,
+    'wp',
+    15000,
+  )
+  return { id: Number(data.id ?? 0), name: String(data.name ?? '').trim() }
+}
+
+/**
+ * Push one change-log entry to the WP-side «WC App Change Log» plugin
+ * (/wp-json/wcapp/v1/log). The plugin verifies the same OAuth signature the
+ * app already sends and attributes the entry to the API key's owner.
+ */
+export async function postChangeLog(
+  cfg: WooConfig,
+  entry: { section: ChangeLogSection; action: string; title: string; details?: string; target?: string; device?: string },
+): Promise<void> {
+  await wooRequest(cfg, 'POST', '/wcapp/v1/log', {}, entry, 'wp', 10000)
+}
+
+/** Read the shared change log from the plugin — same shape as the local log result. */
+export async function getServerChangeLog(cfg: WooConfig, q: ChangeLogQuery): Promise<ChangeLogResult> {
+  const params: Record<string, string | number> = {
+    page: Math.max(1, q.page ?? 1),
+    per_page: Math.min(200, Math.max(10, q.perPage ?? 50)),
+  }
+  if (q.search) params.search = q.search
+  if (q.user) params.user = q.user
+  if (q.section) params.section = q.section
+
+  const { data } = await wooRequest<any>(cfg, 'GET', '/wcapp/v1/log', params, undefined, 'wp', 10000)
+  return {
+    entries: Array.isArray(data?.entries) ? data.entries : [],
+    total: Number(data?.total) || 0,
+    page: Number(data?.page) || 1,
+    perPage: Number(data?.perPage) || Math.min(200, Math.max(10, q.perPage ?? 50)),
+    users: Array.isArray(data?.users) ? data.users.map(String) : [],
+  }
+}
+
+/**
  * Customers are listed via wc/v2 (NOT v3): the v3 endpoint intentionally omits
  * `orders_count` and `total_spent` for performance, while the table and the
  * order-history summary depend on both. v2 returns every other field identically
@@ -239,6 +300,73 @@ export async function listCustomers(cfg: WooConfig, query: ListCustomersQuery): 
     page,
     perPage,
   }
+}
+
+/** Cap on pages walked when snapshotting the customers (100 per page). */
+const MAX_CUSTOMER_SNAPSHOT_PAGES = 100 // 100 × 100 = up to 10,000 customers
+
+/** Compact field set kept in the local customers snapshot (phone matching). */
+const CUSTOMER_LITE_FIELDS = 'id,username,first_name,last_name,email,billing'
+
+/**
+ * Full (bounded) customers snapshot, newest registrations first. Only the
+ * compact field set is requested (`_fields`) so the snapshot stays small.
+ * Powers the INSTANT quick-order mobile lookup from the local cache instead of
+ * a per-keystroke sweep of the store's customer pages.
+ */
+export async function fetchAllCustomersLite(cfg: WooConfig): Promise<Customer[]> {
+  const out: Customer[] = []
+  let page = 0
+  let totalPages = 1
+  for (;;) {
+    page += 1
+    const { data, headers } = await wooRequest<Customer[]>(
+      cfg,
+      'GET',
+      '/customers',
+      { page, per_page: 100, orderby: 'registered_date', order: 'desc', _fields: CUSTOMER_LITE_FIELDS },
+      undefined,
+      'v2',
+    )
+    if (page === 1) totalPages = Math.max(1, Number(headers.get('x-wp-totalpages') ?? 1))
+    out.push(...data)
+    if (data.length === 0 || page >= totalPages || page >= MAX_CUSTOMER_SNAPSHOT_PAGES) break
+  }
+  return out
+}
+
+/**
+ * Incremental refresh of the customers snapshot: with a previous copy only the
+ * newest pages are probed for NEW registrations (registered_date desc) and
+ * folded in by id — the full walk runs only on the first build or after a
+ * manual refresh. (Customer edits/deletions are rare; the next full walk
+ * repairs them.)
+ */
+export async function syncCustomersSnapshot(cfg: WooConfig, prev: Customer[] | undefined): Promise<Customer[]> {
+  if (!prev) return fetchAllCustomersLite(cfg)
+  const byId = new Map(prev.map((c) => [c.id, c]))
+  let page = 0
+  let totalPages = 1
+  for (;;) {
+    page += 1
+    const { data, headers } = await wooRequest<Customer[]>(
+      cfg,
+      'GET',
+      '/customers',
+      { page, per_page: 100, orderby: 'registered_date', order: 'desc', _fields: CUSTOMER_LITE_FIELDS },
+      undefined,
+      'v2',
+    )
+    if (page === 1) totalPages = Math.max(1, Number(headers.get('x-wp-totalpages') ?? 1))
+    let fresh = 0
+    for (const c of data) {
+      if (!byId.has(c.id)) fresh += 1
+      byId.set(c.id, c)
+    }
+    if (data.length === 0 || page >= totalPages || page >= 5) break
+    if (fresh === 0) break
+  }
+  return [...byId.values()]
 }
 
 /** Statuses shown by default (trash is never returned). */
@@ -560,6 +688,7 @@ const PAGE_RETRIES = 3
 async function ordersPageWithRetry(
   cfg: WooConfig,
   page: number,
+  extra: Record<string, string | number> = {},
 ): Promise<{ data: Order[]; headers: Headers }> {
   let lastErr: unknown = null
   for (let attempt = 0; attempt < PAGE_RETRIES; attempt++) {
@@ -574,6 +703,7 @@ async function ordersPageWithRetry(
           page,
           orderby: 'date',
           order: 'desc',
+          ...extra,
         },
         undefined,
         'v3',
@@ -623,6 +753,191 @@ export async function fetchAllOrders(cfg: WooConfig): Promise<Order[]> {
   )
   const orders = [...first, ...rest.flat()]
   return Promise.all(orders.map(async (o) => ({ ...o, customer_name: await customerNameOf(cfg, o) })))
+}
+
+/* ------------------------------------------------------------------ */
+/* Incremental snapshot sync (همگام‌سازی افزایشی)                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Every sync cursor is rewound by this margin so orders/products written on
+ * the server DURING a sync (or host/desktop clock skew) are never skipped by
+ * the next delta. Cursors are ms epochs sent as GMT ISO (modified_after works
+ * against date_modified_gmt) — no store-timezone ambiguity at all.
+ */
+const SYNC_OVERLAP_MS = 5 * 60 * 1000
+/** Minimum gap between two delete-scans (cheap id-only walks) per store. */
+const DELETE_SCAN_GAP_MS = 10 * 60 * 1000
+/** Per-store stamps of the last delete-scan (orders and products separately). */
+const lastDeleteScan = new Map<string, number>()
+
+export interface SnapshotSync<T> {
+  value: T
+  /** New sync cursor (ms epoch) — persist it with cache setSyncMark(). */
+  since: number
+}
+
+/**
+ * All order ids of the store (same scope as fetchAllOrders: every status,
+ * trash excluded) via cheap `_fields=id` pages. Returns null when the walk
+ * could not complete — the caller must then SKIP deletions, because deleting
+ * against a partial id list would wrongly drop everything beyond the scanned
+ * pages.
+ */
+async function scanOrderIds(cfg: WooConfig): Promise<Set<number> | null> {
+  const ids = new Set<number>()
+  let page = 0
+  let totalPages = 1
+  for (;;) {
+    page += 1
+    try {
+      const res = await ordersPageWithRetry(cfg, page, { _fields: 'id' })
+      if (page === 1) totalPages = Math.max(1, Number(res.headers.get('x-wp-totalpages') ?? 1))
+      for (const o of res.data) ids.add(o.id)
+      if (res.data.length === 0 || page >= totalPages) break
+      if (page >= MAX_ORDER_PAGES) return null
+    } catch {
+      return null
+    }
+  }
+  return ids
+}
+
+/**
+ * Incremental version of fetchAllOrders(). With a previous snapshot and its
+ * sync cursor only orders modified after the cursor are downloaded
+ * (modified_after) and folded in by id; orders deleted on the store (trashed)
+ * are dropped by a throttled id-only diff scan. Stores too old to know
+ * `modified_after` ignore the parameter and return everything — the merge is
+ * idempotent, so the sync stays CORRECT (just not incremental). A missing or
+ * empty previous snapshot re-baselines with a full walk.
+ */
+export async function syncOrdersSnapshot(
+  cfg: WooConfig,
+  prev: Order[] | undefined,
+  sinceMs?: number,
+): Promise<SnapshotSync<Order[]>> {
+  if (!prev || prev.length === 0 || !sinceMs) {
+    const orders = await fetchAllOrders(cfg)
+    return { value: orders, since: Date.now() - SYNC_OVERLAP_MS }
+  }
+
+  const modifiedAfter = new Date(sinceMs).toISOString()
+  const changed: Order[] = []
+  let page = 0
+  let totalPages = 1
+  for (;;) {
+    page += 1
+    const res = await ordersPageWithRetry(cfg, page, { modified_after: modifiedAfter })
+    if (page === 1) totalPages = Math.max(1, Number(res.headers.get('x-wp-totalpages') ?? 1))
+    changed.push(...res.data)
+    if (res.data.length === 0 || page >= totalPages || page >= MAX_ORDER_PAGES) break
+  }
+
+  // Enrich changed rows with the same display-name rule as a full walk
+  // (billing name → account lookup, cached), then fold them in by id.
+  const enriched = await Promise.all(changed.map(async (o) => ({ ...o, customer_name: await customerNameOf(cfg, o) })))
+  const byId = new Map(prev.map((o) => [o.id, o]))
+  for (const o of enriched) byId.set(o.id, o)
+  let orders = [...byId.values()]
+
+  const now = Date.now()
+  if (now - (lastDeleteScan.get(cfg.siteUrl + '|orders') ?? 0) >= DELETE_SCAN_GAP_MS) {
+    lastDeleteScan.set(cfg.siteUrl + '|orders', now)
+    const ids = await scanOrderIds(cfg)
+    if (ids) orders = orders.filter((o) => ids.has(o.id))
+  }
+
+  orders.sort((a, b) => +new Date(b.date_created) - +new Date(a.date_created))
+  return { value: orders, since: now - SYNC_OVERLAP_MS }
+}
+
+/**
+ * All product ids across the catalog's statuses (cheap `_fields=id` pages).
+ * Returns null when the walk could not complete (see scanOrderIds).
+ */
+async function scanProductIds(cfg: WooConfig): Promise<Set<number> | null> {
+  const ids = new Set<number>()
+  for (const status of PRODUCT_STATUSES) {
+    let page = 0
+    for (;;) {
+      page += 1
+      try {
+        const { data, headers } = await wooRequest<Product[]>(cfg, 'GET', '/products', {
+          page,
+          per_page: 100,
+          status,
+          orderby: 'date',
+          order: 'desc',
+          _fields: 'id',
+        })
+        for (const p of data) ids.add(p.id)
+        const totalPages = Math.max(1, Number(headers.get('x-wp-totalpages') ?? 1))
+        if (data.length === 0 || page >= totalPages) break
+        if (page >= MAX_PRODUCT_STATUS_PAGES) return null
+      } catch {
+        return null
+      }
+    }
+  }
+  return ids
+}
+
+/**
+ * Incremental version of getProductCatalog(): modified_after delta per catalog
+ * status, idempotent fold-in by id, throttled complete-scan deletion diff —
+ * the same rules as syncOrdersSnapshot(). The truncated flag survives from the
+ * previous snapshot (a delta cannot repair a truncated baseline) and is
+ * re-armed when a delta walk hits the per-status page cap.
+ */
+export async function syncProductCatalog(
+  cfg: WooConfig,
+  prev: ProductCatalog | undefined,
+  sinceMs?: number,
+): Promise<SnapshotSync<ProductCatalog>> {
+  if (!prev || prev.products.length === 0 || !sinceMs) {
+    const catalog = await getProductCatalog(cfg)
+    return { value: catalog, since: Date.now() - SYNC_OVERLAP_MS }
+  }
+
+  const modifiedAfter = new Date(sinceMs).toISOString()
+  const changed: Product[] = []
+  let truncated = prev.truncated
+  for (const status of PRODUCT_STATUSES) {
+    let page = 0
+    for (;;) {
+      page += 1
+      const { data, headers } = await wooRequest<Product[]>(cfg, 'GET', '/products', {
+        page,
+        per_page: 100,
+        status,
+        orderby: 'date',
+        order: 'desc',
+        modified_after: modifiedAfter,
+      })
+      changed.push(...data)
+      const totalPages = Math.max(1, Number(headers.get('x-wp-totalpages') ?? 1))
+      if (data.length === 0 || page >= totalPages) break
+      if (page >= MAX_PRODUCT_STATUS_PAGES) {
+        truncated = true
+        break
+      }
+    }
+  }
+
+  const byId = new Map(prev.products.map((p) => [p.id, p]))
+  for (const p of changed) byId.set(p.id, p)
+  let products = [...byId.values()]
+
+  const now = Date.now()
+  if (now - (lastDeleteScan.get(cfg.siteUrl + '|products') ?? 0) >= DELETE_SCAN_GAP_MS) {
+    lastDeleteScan.set(cfg.siteUrl + '|products', now)
+    const ids = await scanProductIds(cfg)
+    if (ids) products = products.filter((p) => ids.has(p.id))
+  }
+
+  products.sort((a, b) => +new Date(b.date_created) - +new Date(a.date_created))
+  return { value: { products, total: products.length, truncated }, since: now - SYNC_OVERLAP_MS }
 }
 
 /**
