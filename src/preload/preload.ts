@@ -31,6 +31,7 @@ const api: ApiBridge = {
   createOrderNote: (orderId: number, payload: OrderNotePayload) =>
     ipcRenderer.invoke('wc:order-note-create', orderId, payload),
   updateOrderStatus: (orderId: number, status: string) => ipcRenderer.invoke('wc:order-status', orderId, status),
+  updateOrder: (orderId: number, payload) => ipcRenderer.invoke('wc:order-update', orderId, payload),
   printReceipt: (doc) => ipcRenderer.invoke('print:receipt', doc),
   printBulk: (doc) => ipcRenderer.invoke('print:bulk', doc),
   getStoreStats: () => ipcRenderer.invoke('wc:store-stats'),

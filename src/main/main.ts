@@ -34,6 +34,8 @@ import {
   listOrderNotes,
   createOrderNote,
   updateOrderStatus,
+  updateOrder,
+  getOrder,
   listProducts,
   syncProductCatalog,
   getProductDetail,
@@ -56,6 +58,7 @@ import type {
   Order,
   OrderNotePayload,
   OrderPayload,
+  OrderUpdatePayload,
   ProductCatalog,
   ProductDetail,
   ReportsQuery,
@@ -576,6 +579,40 @@ function registerIpc(): void {
         }
       }
       logAction('orders', 'order-status', `تغییر وضعیت سفارش #${orderId}`, 'وضعیت جدید: ' + faStatus(status), '#' + orderId)
+      return result
+    } catch (err) {
+      throw new Error(err instanceof Error ? err.message : String(err))
+    }
+  })
+
+  ipcMain.handle('wc:order-update', async (_event, orderId: number, payload: OrderUpdatePayload) => {
+    const cfg = getSettings()
+    if (!cfg.siteUrl || !cfg.consumerKey || !cfg.consumerSecret) {
+      throw new Error('تنظیمات API کامل نشده است.')
+    }
+    try {
+      // جریان استاندارد ویرایش ووکامرس: ابتدا وضعیت به «در انتظار پرداخت» برمی‌گردد
+      // (موجودی/سقف‌ها در فروشگاه اصلاح می‌شوند)، سپس اقلام/آدرس ویرایش و در پایان
+      // وضعیت قبلی سفارش دوباره برقرار می‌شود.
+      const current = await getOrder(cfg, orderId)
+      const origStatus = current.status
+      const dance = origStatus !== 'pending'
+      let result: Order
+      if (dance) await updateOrderStatus(cfg, orderId, 'pending')
+      try {
+        result = await updateOrder(cfg, orderId, payload)
+      } catch (e) {
+        if (dance) await updateOrderStatus(cfg, orderId, origStatus).catch(() => {})
+        throw e
+      }
+      if (dance) result = await updateOrderStatus(cfg, orderId, origStatus)
+      // Patch the changed order inside the cached snapshot.
+      if (!patchCachedOrder(result)) bumpCacheVersion()
+      const detail =
+        payload.line_items.length + ' قلم' +
+        (payload.billing || payload.shipping ? ' · آدرس به‌روزرسانی شد' : '') +
+        (dance ? ' · وضعیت: ' + faStatus(result.status) : '')
+      logAction('orders', 'order-update', `ویرایش سفارش #${orderId}`, detail, '#' + orderId)
       return result
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))

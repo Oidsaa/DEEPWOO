@@ -189,7 +189,7 @@ export default function DashboardView({ configured, conn, storeName, userName, o
             <div className="empty-sub">
               برای خوش‌آمدگویی، آمار سفارش‌های شما و آخرین اکشن‌ها، ابتدا در تنظیمات کلید API را وارد کنید.
             </div>
-            <button type="button" className="chip-btn" onClick={onGoSettings}>
+            <button type="button" className="btn btn-primary" onClick={onGoSettings}>
               رفتن به تنظیمات
             </button>
           </div>
@@ -254,7 +254,7 @@ export default function DashboardView({ configured, conn, storeName, userName, o
                 <div className="panel-title">آخرین اکشن‌های شما</div>
                 <div className="panel-sub">۵ تغییر آخر که روی فروشگاه اعمال کرده‌اید</div>
               </div>
-              <button type="button" className="chip-btn" onClick={onOpenLog}>
+              <button type="button" className="btn btn-sm btn-ghost" onClick={onOpenLog}>
                 همهٔ اکشن‌ها
               </button>
             </div>

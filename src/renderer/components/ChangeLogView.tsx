@@ -105,14 +105,14 @@ export default function ChangeLogView({ configured, conn, storeName, onGoSetting
             <div className="empty-sub">
               برای ثبت و نمایش لاگ تغییرات، ابتدا در تنظیمات کلید API را وارد کنید و به فروشگاه متصل شوید.
             </div>
-            <button type="button" className="chip-btn" onClick={onGoSettings}>
+            <button type="button" className="btn btn-primary" onClick={onGoSettings}>
               رفتن به تنظیمات
             </button>
           </div>
         </div>
       ) : (
         <div className="panel">
-          <div className="toolbar">
+          <div className="toolbar log-toolbar">
             <div className="search">
               <span className="search-ic">
                 <IconSearch size={15} />
@@ -210,7 +210,7 @@ export default function ChangeLogView({ configured, conn, storeName, onGoSetting
                 <div className="log-pager">
                   <button
                     type="button"
-                    className="chip-btn"
+                    className="btn btn-sm btn-ghost"
                     disabled={page <= 1 || loading}
                     onClick={() => setDebounced((d) => ({ ...d, page: page - 1 }))}
                   >
@@ -219,7 +219,7 @@ export default function ChangeLogView({ configured, conn, storeName, onGoSetting
                   </button>
                   <button
                     type="button"
-                    className="chip-btn"
+                    className="btn btn-sm btn-ghost"
                     disabled={page >= totalPages || loading}
                     onClick={() => setDebounced((d) => ({ ...d, page: page + 1 }))}
                   >

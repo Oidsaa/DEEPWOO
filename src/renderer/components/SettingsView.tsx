@@ -4,13 +4,16 @@ import { DEFAULT_WAREHOUSES, slugifyWarehouseId } from '../../shared/warehouses'
 import { api } from '../api'
 import { faDigits, ORDER_STATUS_META, toLatin } from '../lib/format'
 import { useCurrency } from '../lib/currency'
+import { applyAppearance } from '../lib/theme'
 import {
   IconAlert,
   IconCheck,
   IconClock,
+  IconDroplet,
   IconEye,
   IconEyeOff,
   IconLink,
+  IconMoon,
   IconNote,
   IconPlus,
   IconPrint,
@@ -18,6 +21,7 @@ import {
   IconSearch,
   IconShield,
   IconStore,
+  IconSun,
   IconTag,
   IconTrash,
   IconUpload,
@@ -65,6 +69,18 @@ interface Props {
   conn: ConnState
   onSaved: () => Promise<void>
 }
+
+/** رنگ‌های آمادهٔ تأکیدی — علاوه بر انتخابگر رنگ دلخواه. */
+const ACCENT_PRESETS: Array<{ name: string; hex: string }> = [
+  { name: 'فیروزه‌ای (پیش‌فرض)', hex: '#2dd4bf' },
+  { name: 'آبی', hex: '#3b82f6' },
+  { name: 'نیلی', hex: '#6366f1' },
+  { name: 'بنفش', hex: '#8b5cf6' },
+  { name: 'صورتی', hex: '#ec4899' },
+  { name: 'سرخ', hex: '#f43f5e' },
+  { name: 'نارنجی', hex: '#f97316' },
+  { name: 'سبز', hex: '#22c55e' },
+]
 
 /** Options for the per-warehouse order-status select — exactly the statuses registered on the store. */
 function statusOptions(site: OrderStatusTotal[] | null): Array<{ slug: string; label: string }> {
@@ -164,6 +180,23 @@ export default function SettingsView({ settings, conn, onSaved }: Props) {
 
   const set = <K extends keyof Settings>(key: K, value: Settings[K]) =>
     setForm((f) => ({ ...f, [key]: value }))
+
+  /* ---- ظاهر برنامه (تم + رنگ تأکیدی) با پیش‌نمایش فوری ---- */
+
+  const setTheme = (t: 'dark' | 'light') => {
+    set('theme', t)
+    applyAppearance(t, form.accentColor)
+  }
+
+  const setAccent = (hex?: string) => {
+    set('accentColor', hex)
+    applyAppearance(form.theme, hex)
+  }
+
+  // اگر کاربر بدون ذخیره از تنظیمات خارج شود، ظاهرِ ذخیره‌شده برمی‌گردد.
+  useEffect(() => {
+    return () => applyAppearance(settings?.theme, settings?.accentColor)
+  }, [settings?.theme, settings?.accentColor])
 
   /* ---- انبارها (multi-warehouse definitions) ---- */
 
@@ -579,6 +612,94 @@ export default function SettingsView({ settings, conn, onSaved }: Props) {
         <div className="panel" style={{ gridColumn: '1 / -1' }}>
           <div className="panel-head">
             <div>
+              <div className="panel-title">ظاهر برنامه</div>
+              <div className="panel-sub">
+                تم روشن/تیره و رنگ اصلی رابط کاربری — تغییرات فوراً پیش‌نمایش می‌شوند و با «ذخیره» ماندگار می‌شوند
+              </div>
+            </div>
+            <div className="chip">
+              <IconDroplet size={13} />
+              پیش‌نمایش فوری
+            </div>
+          </div>
+
+          <div className="form-body">
+            <div className="appear-grid">
+              <div className="field">
+                <label className="lbl">تم</label>
+                <div className="theme-seg">
+                  <button
+                    type="button"
+                    className={'theme-opt' + ((form.theme ?? 'dark') === 'dark' ? ' active' : '')}
+                    onClick={() => setTheme('dark')}
+                  >
+                    <IconMoon size={15} />
+                    تیره
+                  </button>
+                  <button
+                    type="button"
+                    className={'theme-opt' + (form.theme === 'light' ? ' active' : '')}
+                    onClick={() => setTheme('light')}
+                  >
+                    <IconSun size={15} />
+                    روشن
+                  </button>
+                </div>
+                <span className="f-hint">تم روشن، ظاهری مینیمال با پس‌زمینهٔ روشن و متن تیره است.</span>
+              </div>
+
+              <div className="field">
+                <label className="lbl">رنگ اصلی (تأکیدی)</label>
+                <div className="accent-row">
+                  {ACCENT_PRESETS.map((c) => (
+                    <button
+                      key={c.hex}
+                      type="button"
+                      className={'accent-swatch' + ((form.accentColor ?? '').toLowerCase() === c.hex ? ' active' : '')}
+                      style={{ background: c.hex }}
+                      title={c.name}
+                      aria-label={c.name}
+                      onClick={() => setAccent(c.hex)}
+                    />
+                  ))}
+                  <label className="accent-custom" title="انتخاب رنگ دلخواه">
+                    <IconDroplet size={14} />
+                    <input
+                      type="color"
+                      value={form.accentColor ?? '#2dd4bf'}
+                      onChange={(e) => setAccent(e.target.value)}
+                    />
+                  </label>
+                  {form.accentColor && (
+                    <button type="button" className="btn btn-ghost btn-sm" onClick={() => setAccent(undefined)}>
+                      رنگ پیش‌فرض
+                    </button>
+                  )}
+                </div>
+                <span className="f-hint">
+                  رنگ دکمه‌ها، منوی فعال و عناصر تأکیدی در هر دو تم — فقط روی همین دستگاه ذخیره می‌شود.
+                </span>
+              </div>
+            </div>
+
+            <div className="form-actions">
+              <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving}>
+                {saving ? <IconRefresh size={16} className="spin" /> : <IconCheck size={16} />}
+                {saving ? 'در حال ذخیره…' : 'ذخیره ظاهر'}
+              </button>
+              {savedFlash && (
+                <span className="save-msg">
+                  <IconCheck size={14} />
+                  ذخیره شد
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="panel" style={{ gridColumn: '1 / -1' }}>
+          <div className="panel-head">
+            <div>
               <div className="panel-title">اطلاعات رسید</div>
               <div className="panel-sub">
                 نام، آدرس، لوگو و تماس فروشگاه — روی رسید فروشگاه و رسید پستی چاپ می‌شود (اختیاری)
@@ -639,7 +760,8 @@ export default function SettingsView({ settings, conn, onSaved }: Props) {
                 </label>
               </div>
               <span className="f-hint">
-                تصویر مربعی با پس‌زمینهٔ شفاف بهتر است؛ به‌صورت خودکار تا عرض ۵۰۰ پیکسل کوچک می‌شود.
+                همین لوگو بالای سایدبار و روی رسیدها نمایش داده می‌شود؛ تصویر مربعی با پس‌زمینهٔ شفاف بهتر است و
+                به‌صورت خودکار تا عرض ۵۰۰ پیکسل کوچک می‌شود.
               </span>
             </div>
 

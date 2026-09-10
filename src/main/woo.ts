@@ -13,6 +13,7 @@ import type {
   OrderNote,
   OrderNotePayload,
   OrderPayload,
+  OrderUpdatePayload,
   OrdersListResult,
   OrdersResult,
   OrderStatusTotal,
@@ -1132,6 +1133,18 @@ export async function createOrderNote(
 /** Change an order's status (PUT /orders/{id} with { status }). */
 export async function updateOrderStatus(cfg: WooConfig, orderId: number, status: string): Promise<Order> {
   const { data } = await wooRequest<Order>(cfg, 'PUT', '/orders/' + orderId, {}, { status })
+  return data
+}
+
+/** Fetch a single order (used before editing to know its current status). */
+export async function getOrder(cfg: WooConfig, orderId: number): Promise<Order> {
+  const { data } = await wooRequest<Order>(cfg, 'GET', '/orders/' + orderId)
+  return data
+}
+
+/** Update an existing order's line items and addresses. */
+export async function updateOrder(cfg: WooConfig, orderId: number, payload: OrderUpdatePayload): Promise<Order> {
+  const { data } = await wooRequest<Order>(cfg, 'PUT', '/orders/' + orderId, {}, payload)
   return data
 }
 

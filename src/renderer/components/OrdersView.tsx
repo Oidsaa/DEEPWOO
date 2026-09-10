@@ -13,6 +13,7 @@ import {
   IconAlert,
   IconBag,
   IconCheck,
+  IconEdit,
   IconEye,
   IconGear,
   IconPrint,
@@ -23,6 +24,7 @@ import {
   IconX,
 } from './Icons'
 import OrderDetailModal from './OrderDetailModal'
+import OrderEditModal from './OrderEditModal'
 import OrderStatusModal from './OrderStatusModal'
 import ReceiptModal from './ReceiptModal'
 
@@ -51,6 +53,8 @@ export default function OrdersView({ configured, conn, storeName, onGoSettings }
   const [detailOrder, setDetailOrder] = useState<Order | null>(null)
   /** Row-level status change (single order). */
   const [statusOrder, setStatusOrder] = useState<Order | null>(null)
+  /** Edit order line items. */
+  const [editOrder, setEditOrder] = useState<Order | null>(null)
   /** Bulk status change for the selected orders. */
   const [bulkStatus, setBulkStatus] = useState(false)
   /** Bulk print: menu open + its viewport anchor, or building/sending. */
@@ -473,6 +477,7 @@ export default function OrdersView({ configured, conn, storeName, onGoSettings }
                       onToggle={() => toggleOne(o.id)}
                       onDetail={() => setDetailOrder(o)}
                       onStatus={() => setStatusOrder(o)}
+                      onEdit={() => setEditOrder(o)}
                       onPrint={(e) => {
                         const r = e.currentTarget.getBoundingClientRect()
                         setPrintMenu({ order: o, top: r.bottom + 6, right: window.innerWidth - r.right })
@@ -485,6 +490,17 @@ export default function OrdersView({ configured, conn, storeName, onGoSettings }
           )}
 
           {detailOrder && <OrderDetailModal order={detailOrder} onClose={() => setDetailOrder(null)} />}
+
+          {editOrder && (
+            <OrderEditModal
+              order={editOrder}
+              onClose={() => setEditOrder(null)}
+              onSaved={() => {
+                setEditOrder(null)
+                reloadView(setLoadCount)
+              }}
+            />
+          )}
 
           {statusOrder && (
             <OrderStatusModal
@@ -607,6 +623,7 @@ function OrderRow({
   onToggle,
   onDetail,
   onStatus,
+  onEdit,
   onPrint,
 }: {
   order: Order
@@ -614,6 +631,7 @@ function OrderRow({
   onToggle: () => void
   onDetail: () => void
   onStatus: () => void
+  onEdit: () => void
   onPrint: (e: ReactMouseEvent<HTMLButtonElement>) => void
 }) {
   const cur = useCurrency()
@@ -668,6 +686,15 @@ function OrderRow({
             onClick={onDetail}
           >
             <IconEye size={14} />
+          </button>
+          <button
+            type="button"
+            className="btn-icon"
+            title="ویرایش اقلام سفارش"
+            aria-label={`ویرایش اقلام سفارش ${order.number}`}
+            onClick={onEdit}
+          >
+            <IconEdit size={14} />
           </button>
           <button
             type="button"

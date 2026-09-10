@@ -1191,6 +1191,37 @@ export const mockApi: ApiBridge = {
     order.date_modified = new Date().toISOString()
     return order
   },
+  async updateOrder(orderId: number, payload) {
+    await delay(600)
+    if (!isDemoSettings(storedSettings())) throw new Error(NOT_REAL_MSG)
+    const order = allOrders().find((o) => o.id === orderId)
+    if (!order) throw new Error('سفارش موردنظر پیدا نشد.')
+    if (payload.billing) order.billing = { ...order.billing, ...payload.billing }
+    if (payload.shipping) order.shipping = { ...(order.shipping ?? {}), ...payload.shipping }
+    // WooCommerce semantics: id-less lines are new; quantity 0 removes the line.
+    const byId = new Map(order.line_items.map((li) => [li.id, li] as const))
+    order.line_items = payload.line_items
+      .filter((li) => li.quantity > 0)
+      .map((li) => {
+        const prev = li.id !== undefined ? byId.get(li.id) : undefined
+        const prod = li.product_id !== undefined ? ALL_PRODUCTS.find((p) => p.id === li.product_id) : undefined
+        const price = Number(prod?.price ?? prev?.price ?? 0)
+        return {
+          id: li.id ?? Math.floor(Math.random() * 100000),
+          name: prod?.name ?? prev?.name ?? 'کالا',
+          product_id: li.product_id ?? prev?.product_id,
+          variation_id: li.variation_id ?? prev?.variation_id,
+          quantity: li.quantity,
+          subtotal: String(price * li.quantity),
+          total: String(price * li.quantity),
+          price: String(price),
+          sku: prod?.sku ?? prev?.sku ?? '',
+        }
+      })
+    order.total = String(order.line_items.reduce((sum, item) => sum + Number(item.total), 0))
+    order.date_modified = new Date().toISOString()
+    return order
+  },
   async printReceipt() {
     // Printing is a desktop-only capability (system print dialog).
     throw new Error('چاپ فقط در نسخهٔ دسکتاپ برنامه در دسترس است.')

@@ -8,8 +8,12 @@ export interface Settings {
   storeAddress?: string
   storePostcode?: string
   storePhone?: string
-  /** Store logo as a data URL (read from a local image file). */
+  /** Store logo as a data URL (read from a local image file). Also shown at the top of the sidebar. */
   storeLogo?: string
+  /** رنگ‌بندی برنامه: «dark» پیش‌فرض است؛ «light» تم روشن مینیمال. */
+  theme?: 'dark' | 'light'
+  /** رنگ تأکیدی دستی (هگز مثل #2dd4bf) برای دکمه‌ها و عناصر اصلی؛ خالی = رنگ پیش‌فرض تم. */
+  accentColor?: string
   /**
    * نام کارشناس فعال: نام نمایشیِ صاحبِ کلید API (از خود سایت با wp/v2/users/me
    * خوانده می‌شود) که در «لاگ تغییرات» به هر اکشن چسبانده می‌شود.
@@ -281,6 +285,7 @@ export interface Order {
   discount_total?: string
   shipping_total?: string
   line_items: Array<{
+    id?: number
     name: string
     quantity: number
     total: string
@@ -350,6 +355,61 @@ export interface OrdersListResult {
  * quick-registration screen. Only product/variation ids and quantities are
  * sent — WooCommerce computes prices, totals and variation meta itself.
  */
+export interface OrderPayload {
+  customer_id?: number
+  customer_note?: string
+  payment_method?: string
+  payment_method_title?: string
+  /** Mark the order paid immediately (in-store cash / card-to-card sales). */
+  set_paid?: boolean
+  /** Status to create the order with (e.g. processing / pending-payment). */
+  status?: string
+  billing?: {
+    first_name?: string
+    last_name?: string
+    phone?: string
+    address_1?: string
+    address_2?: string
+    city?: string
+    state?: string
+    postcode?: string
+    country?: string
+  }
+  shipping?: {
+    first_name?: string
+    last_name?: string
+    address_1?: string
+    address_2?: string
+    city?: string
+    state?: string
+    postcode?: string
+    country?: string
+  }
+  line_items: Array<{
+    product_id: number
+    /** Required for variable products — picks the exact combination. */
+    variation_id?: number
+    quantity: number
+  }>
+}
+
+/** Payload for updating an existing order's line items and addresses.
+ * Line-item semantics (WooCommerce REST):
+ *  - existing line → send its `id` (+ product/variation ids) with the new quantity
+ *  - deleted line  → send its `id` with quantity 0
+ *  - new line      → no `id`, just product_id/variation_id + quantity
+ */
+export interface OrderUpdatePayload {
+  line_items: Array<{
+    id?: number
+    product_id?: number
+    variation_id?: number
+    quantity: number
+  }>
+  billing?: Partial<Order['billing']>
+  shipping?: Partial<NonNullable<Order['shipping']>>
+}
+
 export interface OrderPayload {
   customer_id?: number
   customer_note?: string
@@ -641,6 +701,8 @@ export interface ApiBridge {
   listOrderNotes(orderId: number): Promise<OrderNote[]>
   createOrderNote(orderId: number, payload: OrderNotePayload): Promise<OrderNote>
   updateOrderStatus(orderId: number, status: string): Promise<Order>
+  /** Update an order (line items, totals, etc). */
+  updateOrder(orderId: number, payload: OrderUpdatePayload): Promise<Order>
   /** Print a receipt document through the system print dialog (desktop only). */
   printReceipt(doc: PrintReceiptDoc): Promise<{ ok: boolean }>
   /** Print a BULK document (several receipts on one paper layout). */

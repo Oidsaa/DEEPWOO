@@ -33,6 +33,11 @@ export function getSettings(): Settings {
       storePostcode: typeof data.storePostcode === 'string' ? data.storePostcode : undefined,
       storePhone: typeof data.storePhone === 'string' ? data.storePhone : undefined,
       storeLogo: typeof data.storeLogo === 'string' ? data.storeLogo : undefined,
+      theme: data.theme === 'light' ? 'light' : data.theme === 'dark' ? 'dark' : undefined,
+      accentColor:
+        typeof data.accentColor === 'string' && /^#[0-9a-fA-F]{6}$/.test(data.accentColor.trim())
+          ? data.accentColor.trim().toLowerCase()
+          : undefined,
       userName: typeof data.userName === 'string' && data.userName.trim() ? data.userName.trim() : undefined,
       noteExclusions: Array.isArray(data.noteExclusions)
         ? (data.noteExclusions as unknown[]).filter((x): x is string => typeof x === 'string')
@@ -84,6 +89,11 @@ export function sanitizeSettings(input: Settings): Settings {
     storePostcode: (input.storePostcode ?? '').trim() || undefined,
     storePhone: (input.storePhone ?? '').trim() || undefined,
     storeLogo: (input.storeLogo ?? '').trim() || undefined,
+    theme: input.theme === 'light' ? 'light' : input.theme === 'dark' ? 'dark' : undefined,
+    accentColor:
+      typeof input.accentColor === 'string' && /^#[0-9a-fA-F]{6}$/.test(input.accentColor.trim())
+        ? input.accentColor.trim().toLowerCase()
+        : undefined,
     userName: (input.userName ?? '').trim() || undefined,
     // One phrase per line from the settings textarea: trimmed, non-empty, deduped.
     noteExclusions: [...new Set((input.noteExclusions ?? []).map((p) => p.trim()).filter(Boolean))],

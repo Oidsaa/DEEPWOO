@@ -11,10 +11,12 @@ interface Props {
   conn: ConnState
   storeName: string | null
   userName?: string | null
+  /** لوگوی شخصی انتخاب‌شده در تنظیمات (data URL) — جایگزین کادر لوگوی پیش‌فرض. */
+  logo?: string | null
   onNavigate: (view: ViewId) => void
 }
 
-export default function Sidebar({ view, configured, host, conn, storeName, userName, onNavigate }: Props) {
+export default function Sidebar({ view, configured, host, conn, storeName, userName, logo, onNavigate }: Props) {
   // سفارش‌های در حال پردازش (processing) — badge کنار منوی سفارش‌ها.
   const [processingCount, setProcessingCount] = useState<number | null>(null)
   // اقلامِ مغایرت‌دار (مجموع انبارها ≠ موجودی سایت) — badge کنار منوی انبارها.
@@ -67,9 +69,13 @@ export default function Sidebar({ view, configured, host, conn, storeName, userN
   return (
     <aside className="sidebar">
       <div className="sb-brand">
-        <div className="sb-logo">
-          <IconStore size={23} />
-        </div>
+        {logo ? (
+          <img className="sb-logo sb-logo-img" src={logo} alt="لوگوی فروشگاه" />
+        ) : (
+          <div className="sb-logo">
+            <IconStore size={23} />
+          </div>
+        )}
         <div>
           <div className="sb-name">داشبورد ووکامرس</div>
           <div className="sb-tag">مدیریت فروشگاه «{storeName ?? 'ووکامرس'}»</div>

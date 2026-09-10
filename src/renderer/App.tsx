@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { ConnState, Settings, ViewId } from '../shared/types'
 import { api, bridgeMissing } from './api'
+import { applyAppearance } from './lib/theme'
 import { DEMO_SETTINGS } from './lib/mock'
 import CustomersView from './components/CustomersView'
 import ChangeLogView from './components/ChangeLogView'
@@ -48,6 +49,10 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    applyAppearance(settings?.theme, settings?.accentColor)
+  }, [settings?.theme, settings?.accentColor])
+
+  useEffect(() => {
     let cancelled = false
     void (async () => {
       const s = await api.getSettings()
@@ -75,11 +80,18 @@ export default function App() {
 
   /** Demo preview only: explicitly load the built-in sample dataset. */
   const handleUseDemo = useCallback(async () => {
-    await api.saveSettings(DEMO_SETTINGS)
-    setSettings(DEMO_SETTINGS)
+    // ترجیحات ظاهری دستگاهی هستند (تم/رنگ/لوگو) — با ورود به حالت نمایشی پاک نشوند.
+    const demo: Settings = {
+      ...DEMO_SETTINGS,
+      theme: settings?.theme,
+      accentColor: settings?.accentColor,
+      storeLogo: settings?.storeLogo,
+    }
+    await api.saveSettings(demo)
+    setSettings(demo)
     setConn({ state: 'ok', message: 'حالت نمایشی فعال شد — دادهٔ آزمایشی بارگذاری می‌شود.' })
     setView('customers')
-  }, [])
+  }, [settings?.theme, settings?.accentColor, settings?.storeLogo])
 
   if (bridgeMissing) {
     return (
@@ -111,6 +123,7 @@ export default function App() {
         conn={conn}
         storeName={storeName}
         userName={settings?.userName ?? null}
+        logo={settings?.storeLogo ?? null}
         onNavigate={setView}
       />
       <main className="main">

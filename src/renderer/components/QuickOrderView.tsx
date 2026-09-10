@@ -142,7 +142,7 @@ export default function QuickOrderView({ configured, conn, storeName, onGoSettin
     const t = window.setTimeout(() => {
       setProdLoading(true)
       api
-        .listProducts({ search: q, status: 'publish', perPage: 12 })
+        .listProducts({ search: q, perPage: 12 })
         .then((r) => {
           if (!cancelled) setProdResults(r.products)
         })
