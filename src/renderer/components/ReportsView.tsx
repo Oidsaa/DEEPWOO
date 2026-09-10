@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import type { ConnState, CustomerInsights, OpsGroup, OpsOrderRow, Product, SalesReport, TopSeller } from '../../shared/types'
 import { api, isMock } from '../api'
 import { faDate, faDay, faDigits, faNum, faTime, orderStatusMeta } from '../lib/format'
+import { useCurrency } from '../lib/currency'
 import { lastStoreSync } from '../lib/syncStamp'
 import { jalaliToLocalKey, localKeyDaysAgo, localKeyToJalali } from '../lib/jalali'
 import { stockAlertsOf, topRatedProducts } from '../../shared/reports'
@@ -103,6 +104,7 @@ function growthText(cur: number, prev: number): string | null {
 }
 
 function OverviewTab({ r, maxDay }: { r: SalesReport; maxDay: number }) {
+  const cur = useCurrency()
   const c = r.customers
   const avg = r.totals.orders > 0 ? r.totals.revenue / r.totals.orders : 0
   const prevAvg = r.previous.orders > 0 ? r.previous.revenue / r.previous.orders : 0
@@ -122,7 +124,7 @@ function OverviewTab({ r, maxDay }: { r: SalesReport; maxDay: number }) {
           <div>
             <div className="stat-label">فروش در این بازه</div>
             <div className="stat-value">{faNum(r.totals.revenue)}</div>
-            <div className="stat-hint">تومان — سفارش‌های معتبر</div>
+            <div className="stat-hint">{cur} — سفارش‌های معتبر</div>
             <span className={'stat-delta ' + (growthSales?.includes('▼') ? 'down' : 'up')}>{growthSales ?? '— نسبت به دورهٔ قبل'}</span>
           </div>
         </div>
@@ -144,7 +146,7 @@ function OverviewTab({ r, maxDay }: { r: SalesReport; maxDay: number }) {
           <div>
             <div className="stat-label">میانگین ارزش سبد خرید</div>
             <div className="stat-value">{faNum(Math.round(avg))}</div>
-            <div className="stat-hint">تومان به ازای هر سفارش</div>
+            <div className="stat-hint">{cur} به ازای هر سفارش</div>
             <span className={'stat-delta ' + (growthAvg?.includes('▼') ? 'down' : 'up')}>{growthAvg ?? '— نسبت به دورهٔ قبل'}</span>
           </div>
         </div>
@@ -197,16 +199,16 @@ function OverviewTab({ r, maxDay }: { r: SalesReport; maxDay: number }) {
           <div className="rp-body" style={{ gap: 10 }}>
             <ExecRow
               title="بهترین روز فروش"
-              value={best && best.total > 0 ? `${faDate(best.date)} — ${faNum(best.total)} تومان` : 'در این بازه فروشی ثبت نشده'}
+              value={best && best.total > 0 ? `${faDate(best.date)} — ${faNum(best.total)} ${cur}` : 'در این بازه فروشی ثبت نشده'}
               icon={<IconChart size={13} />}
             />
             <ExecRow title="نسبت سفارش به مشتری" value={c.orderRatio !== null ? `${faNum(c.orderRatio)} سفارش به ازای هر مشتری فعال` : '—'} icon={<IconBag size={13} />} />
             <ExecRow title="مشتریان بازه" value={`${faNum(c.active)} فعال (${faNum(c.newCustomers)} جدید · ${faNum(c.returning)} بازگشتی · ${faNum(c.guests)} مهمان)`} icon={<IconUsers size={13} />} />
             <ExecRow title="خرید تکراری" value={c.repeatRate !== null ? `${faNum(c.repeatRate)}٪ مشتریان بیش از یک بار خرید کرده‌اند` : '—'} icon={<IconLayers size={13} />} />
             {topPay ? (
-              <ExecRow title="روش پرداخت غالب" value={`${topPay.label} — ${faNum(topPay.count)} سفارش (${faNum(topPay.total)} تومان)`} icon={<IconWallet size={13} />} />
+              <ExecRow title="روش پرداخت غالب" value={`${topPay.label} — ${faNum(topPay.count)} سفارش (${faNum(topPay.total)} ${cur})`} icon={<IconWallet size={13} />} />
             ) : null}
-            <ExecRow title="میانگین فروش روزانه" value={r.days > 0 ? faNum(Math.round(r.totals.revenue / r.days)) + ' تومان' : '—'} icon={<IconClock size={13} />} />
+            <ExecRow title="میانگین فروش روزانه" value={r.days > 0 ? faNum(Math.round(r.totals.revenue / r.days)) + ' ' + cur : '—'} icon={<IconClock size={13} />} />
           </div>
         </section>
       </div>
@@ -221,7 +223,7 @@ function OverviewTab({ r, maxDay }: { r: SalesReport; maxDay: number }) {
             </div>
           </div>
           <span className="qo-cust-picked">
-            <IconChart size={13} /> اوج روزانه: {faNum(maxDay)} تومان
+            <IconChart size={13} /> اوج روزانه: {faNum(maxDay)} {cur}
           </span>
         </div>
         <div className="rp-chart-wrap">
@@ -255,7 +257,7 @@ function OverviewTab({ r, maxDay }: { r: SalesReport; maxDay: number }) {
                     <div className="rp-row-head">
                       <span className={'pill ' + meta.cls}>{meta.fa}</span>
                       <span className="rp-row-val num">
-                        {faNum(s.total)} تومان · {faNum(s.count)} سفارش
+                        {faNum(s.total)} {cur} · {faNum(s.count)} سفارش
                       </span>
                     </div>
                     <div className="rp-bar-track slim">
@@ -285,7 +287,7 @@ function OverviewTab({ r, maxDay }: { r: SalesReport; maxDay: number }) {
                   <div className="rp-row" key={p.label}>
                     <div className="rp-row-head">
                       <span className="rp-row-name">{p.label}</span>
-                      <span className="rp-row-val num">{faNum(p.total)} تومان</span>
+                      <span className="rp-row-val num">{faNum(p.total)} {cur}</span>
                     </div>
                     <div className="rp-bar-track slim">
                       <div className="rp-bar" style={{ width: share + '%' }} />
@@ -317,7 +319,7 @@ function OverviewTab({ r, maxDay }: { r: SalesReport; maxDay: number }) {
                   <div className="rp-row-head">
                     <span className="rp-row-name">{unknown ? 'نامشخص' : c.city}</span>
                     <span className="rp-row-val num">
-                      {faNum(c.total)} تومان · {faNum(c.count)} سفارش
+                      {faNum(c.total)} {cur} · {faNum(c.count)} سفارش
                     </span>
                   </div>
                   <div className="rp-bar-track slim">
@@ -348,6 +350,7 @@ function ExecRow({ icon, title, value }: { icon: ReactNode; title: string; value
 }
 
 function DayChart({ r, maxDay }: { r: SalesReport; maxDay: number }) {
+  const cur = useCurrency()
   const dayLabelEvery = Math.max(1, Math.ceil(r.daily.length / 12))
   return (
     <div className="rp-chart" dir="ltr">
@@ -357,7 +360,7 @@ function DayChart({ r, maxDay }: { r: SalesReport; maxDay: number }) {
           <div
             className="rp-bar-col"
             key={d.date}
-            title={`${faDate(d.date)} — ${faNum(d.total)} تومان · ${faNum(d.orders)} سفارش`}
+            title={`${faDate(d.date)} — ${faNum(d.total)} ${cur} · ${faNum(d.orders)} سفارش`}
           >
             <div className="rp-bar-track">
               <div className="rp-bar" style={{ height: h + '%' }} />
@@ -375,6 +378,7 @@ function DayChart({ r, maxDay }: { r: SalesReport; maxDay: number }) {
 /* ------------------------------------------------------------------ */
 
 function CustomerRows({ r }: { r: SalesReport }) {
+  const cur = useCurrency()
   const c = r.customers
   return (
     <>
@@ -410,7 +414,7 @@ function CustomerRows({ r }: { r: SalesReport }) {
             <div className="rp-row">
               <div className="rp-row-head">
                 <span className="rp-row-name">میانگین فروش هر مشتری فعال</span>
-                <span className="rp-row-val num">{c.avgRevenue !== null ? faNum(Math.round(c.avgRevenue)) + ' تومان' : '—'}</span>
+                <span className="rp-row-val num">{c.avgRevenue !== null ? faNum(Math.round(c.avgRevenue)) + ' ' + cur : '—'}</span>
               </div>
             </div>
             <div className="rp-row">
@@ -466,7 +470,7 @@ function CustomerRows({ r }: { r: SalesReport }) {
                         {cou.code}
                       </span>
                       <span className="rp-row-val num">
-                        {faNum(cou.orders)} سفارش · {faNum(cou.discount)} تومان تخفیف
+                        {faNum(cou.orders)} سفارش · {faNum(cou.discount)} {cur} تخفیف
                       </span>
                     </div>
                     <MiniBar v={cou.orders} max={max} cls="soft" />
@@ -497,6 +501,7 @@ function IconUserPlusInline() {
 }
 
 function TopCustomers({ title, rows, by }: { title: string; rows: CustomerInsights['topByAmount']; by: 'مبلغ' | 'تعداد' }) {
+  const cur = useCurrency()
   const maxV = Math.max(1, ...rows.map((r) => (by === 'مبلغ' ? r.revenue : r.orders)))
   return (
     <section className="panel">
@@ -521,8 +526,8 @@ function TopCustomers({ title, rows, by }: { title: string; rows: CustomerInsigh
                   </span>
                 </span>
                 <span className="rp-row-val num">
-                  {by === 'مبلغ' ? faNum(c.revenue) + ' تومان' : faNum(c.orders) + ' سفارش'}
-                  {by === 'مبلغ' ? ` · ${faNum(c.orders)} سفارش` : ` · ${faNum(c.revenue)} تومان`}
+                  {by === 'مبلغ' ? faNum(c.revenue) + ' ' + cur : faNum(c.orders) + ' سفارش'}
+                  {by === 'مبلغ' ? ` · ${faNum(c.orders)} سفارش` : ` · ${faNum(c.revenue)} ${cur}`}
                 </span>
               </div>
               <MiniBar v={by === 'مبلغ' ? c.revenue : c.orders} max={maxV} cls="indigo" />
@@ -539,6 +544,7 @@ function TopCustomers({ title, rows, by }: { title: string; rows: CustomerInsigh
 /* ------------------------------------------------------------------ */
 
 function ProductsTab({ r, catalog }: { r: SalesReport; catalog: Product[] }) {
+  const cur = useCurrency()
   const topRated = catalog.length > 0 ? topRatedProducts(catalog, 10) : []
   const p = r.profit
   return (
@@ -672,14 +678,14 @@ function ProductsTab({ r, catalog }: { r: SalesReport; catalog: Product[] }) {
             </div>
           </div>
           <span className="qo-cust-picked">
-            <IconWallet size={13} /> سود ناخالص: {p.coveredRevenue > 0 ? faNum(p.grossProfit) : '—'} تومان
+            <IconWallet size={13} /> سود ناخالص: {p.coveredRevenue > 0 ? faNum(p.grossProfit) : '—'} {cur}
           </span>
         </div>
         {p.uncoveredProducts > 0 && (
           <div className="notice amber" style={{ margin: '0 16px 10px' }}>
             <IconAlert size={15} />
             <div style={{ flex: 1 }}>
-              {faNum(p.uncoveredProducts)} کالای فروخته‌شده قیمت تمام‌شده ندارند ({faNum(p.uncoveredRevenue)} تومان فروش) — سود آن‌ها محاسبه نشده است.
+              {faNum(p.uncoveredProducts)} کالای فروخته‌شده قیمت تمام‌شده ندارند ({faNum(p.uncoveredRevenue)} {cur} فروش) — سود آن‌ها محاسبه نشده است.
             </div>
           </div>
         )}
@@ -769,14 +775,15 @@ function ProductRow({ p, i, total, weekly }: { p: TopSeller; i: number; total?: 
 /* ------------------------------------------------------------------ */
 
 function OrdersTab({ r }: { r: SalesReport }) {
+  const cur = useCurrency()
   const o = r.ops
   return (
     <>
       <div className="stat-grid">
-        <Kpi icon={<IconX size={19} />} tone="t-red" label="لغو و برگشت (بازه)" value={faNum(o.cancelled.count)} hint={o.cancelled.total > 0 ? faNum(o.cancelled.total) + ' تومان' : undefined} />
-        <Kpi icon={<IconClock size={19} />} tone="t-amber" label="لغو/برگشت ۷ روز اخیر" value={faNum(o.cancelled7.count)} hint={o.cancelled7.total > 0 ? faNum(o.cancelled7.total) + ' تومان' : undefined} />
-        <Kpi icon={<IconBag size={19} />} tone="t-indigo" label="سفارش‌های معوق و تکمیل‌نشده" value={faNum(o.waiting.count)} hint={o.waiting.total > 0 ? faNum(o.waiting.total) + ' تومان' : undefined} />
-        <Kpi icon={<IconStore size={19} />} tone="t-teal" label="سبدهای رها شده" value={faNum(o.abandoned.count)} hint={o.abandoned.total > 0 ? faNum(o.abandoned.total) + ' تومان' : undefined} />
+        <Kpi icon={<IconX size={19} />} tone="t-red" label="لغو و برگشت (بازه)" value={faNum(o.cancelled.count)} hint={o.cancelled.total > 0 ? faNum(o.cancelled.total) + ' ' + cur : undefined} />
+        <Kpi icon={<IconClock size={19} />} tone="t-amber" label="لغو/برگشت ۷ روز اخیر" value={faNum(o.cancelled7.count)} hint={o.cancelled7.total > 0 ? faNum(o.cancelled7.total) + ' ' + cur : undefined} />
+        <Kpi icon={<IconBag size={19} />} tone="t-indigo" label="سفارش‌های معوق و تکمیل‌نشده" value={faNum(o.waiting.count)} hint={o.waiting.total > 0 ? faNum(o.waiting.total) + ' ' + cur : undefined} />
+        <Kpi icon={<IconStore size={19} />} tone="t-teal" label="سبدهای رها شده" value={faNum(o.abandoned.count)} hint={o.abandoned.total > 0 ? faNum(o.abandoned.total) + ' ' + cur : undefined} />
       </div>
       <div className="notice info" style={{ marginTop: 0 }}>
         <IconAlert size={15} />
@@ -798,6 +805,7 @@ function OrdersTab({ r }: { r: SalesReport }) {
 }
 
 function OpsPanel({ title, sub, g, emptyNote }: { title: string; sub: string; g: OpsGroup; emptyNote?: string }) {
+  const cur = useCurrency()
   return (
     <section className="panel">
       <div className="panel-head">
@@ -805,7 +813,7 @@ function OpsPanel({ title, sub, g, emptyNote }: { title: string; sub: string; g:
           <div className="panel-title">{title}</div>
           <div className="panel-sub">
             {sub} · {faNum(g.count)} سفارش
-            {g.total > 0 ? ` · جمع ${faNum(g.total)} تومان` : ''}
+            {g.total > 0 ? ` · جمع ${faNum(g.total)} ${cur}` : ''}
           </div>
         </div>
       </div>

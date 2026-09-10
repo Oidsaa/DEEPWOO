@@ -402,6 +402,16 @@ export default function WarehousesView({ configured, conn, storeName, onGoSettin
             ) : (
               <div className="tbl-wrap">
                 <table className="tbl tbl-warehouses" style={dimmed ? { opacity: 0.45 } : undefined}>
+                  <colgroup>
+                    <col />
+                    <col style={{ width: 76 }} />
+                    {overview.warehouses.map((w) => (
+                      <col key={w.id} style={{ width: 84 }} />
+                    ))}
+                    <col style={{ width: 86 }} />
+                    <col />
+                    <col />
+                  </colgroup>
                   <thead>
                     <tr>
                       <th>محصول</th>

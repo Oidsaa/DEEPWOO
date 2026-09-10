@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import type { Customer, Order, OrdersResult } from '../../shared/types'
 import { api } from '../api'
 import { avatarPalette, faDate, faDigits, faNum, orderStatusMeta } from '../lib/format'
+import { useCurrency } from '../lib/currency'
 import { IconAlert, IconBag, IconRefresh, IconX } from './Icons'
 
 interface Props {
@@ -19,6 +20,7 @@ function initialsOf(c: Customer): string {
 }
 
 export default function OrderHistoryModal({ customer, onClose }: Props) {
+  const cur = useCurrency()
   const [result, setResult] = useState<OrdersResult | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -98,7 +100,7 @@ export default function OrderHistoryModal({ customer, onClose }: Props) {
           <div className="order-summary-item">
             <span className="stat-label">مجموع خرید</span>
             <span className="order-summary-val" title="شامل همهٔ وضعیت‌ها به‌جز ناموفق، لغو شده و بازپرداخت‌شده">
-              {result ? faNum(result.purchaseSum) : faNum(customer.total_spent)}
+              {result ? faNum(result.purchaseSum) + ' ' + cur : faNum(customer.total_spent) + ' ' + cur}
             </span>
           </div>
           <div className="order-summary-item order-summary-sub">
@@ -173,6 +175,7 @@ export default function OrderHistoryModal({ customer, onClose }: Props) {
 }
 
 function OrderCard({ order }: { order: Order }) {
+  const cur = useCurrency()
   const meta = orderStatusMeta(order.status)
   const lineTotal = order.line_items.reduce((a, l) => a + l.quantity, 0)
   const visibleItems = order.line_items.slice(0, 4)
@@ -186,7 +189,7 @@ function OrderCard({ order }: { order: Order }) {
           #{faDigits(order.number)}
         </span>
         <span className="order-date">{faDate(order.date_created)}</span>
-        <span className="order-card-total">{faNum(order.total)}</span>
+        <span className="order-card-total">{faNum(order.total)} {cur}</span>
       </div>
 
       <ul className="order-items">
@@ -194,7 +197,7 @@ function OrderCard({ order }: { order: Order }) {
           <li key={i}>
             <span className="order-item-name">{li.name}</span>
             <span className="order-item-qty">× {faNum(li.quantity)}</span>
-            <span className="order-item-total">{faNum(li.total)}</span>
+            <span className="order-item-total">{faNum(li.total)} {cur}</span>
           </li>
         ))}
         {hiddenCount > 0 && <li className="order-more">و {faNum(hiddenCount)} مورد دیگر…</li>}

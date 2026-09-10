@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import type { ProductPayload } from '../../shared/types'
 import { api } from '../api'
 import { toLatin } from '../lib/format'
+import { useCurrency } from '../lib/currency'
 import { IconAlert, IconCheck, IconPlus, IconRefresh, IconX } from './Icons'
 
 interface Props {
@@ -20,6 +21,7 @@ const STATUS_OPTIONS = [
 const FORM_EMPTY = { name: '', type: 'simple', status: 'publish', price: '', sale: '', qty: '' }
 
 export default function AddProductModal({ onClose, onCreated }: Props) {
+  const cur = useCurrency()
   const [form, setForm] = useState(FORM_EMPTY)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -188,7 +190,7 @@ export default function AddProductModal({ onClose, onCreated }: Props) {
             <div className="form-grid">
               <div className="field">
                 <label className="lbl" htmlFor="ap-price">
-                  قیمت (تومان) <span className="req">*</span>
+                  قیمت ({cur}) <span className="req">*</span>
                 </label>
                 <input
                   id="ap-price"

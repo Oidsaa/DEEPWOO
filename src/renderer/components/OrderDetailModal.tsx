@@ -4,6 +4,7 @@ import type { FormEvent } from 'react'
 import type { Order, OrderNote } from '../../shared/types'
 import { api } from '../api'
 import { faDate, faDigits, faNum, faTime, orderStatusMeta } from '../lib/format'
+import { useCurrency } from '../lib/currency'
 import { IconAlert, IconBag, IconNote, IconRefresh, IconX } from './Icons'
 
 interface Props {
@@ -27,6 +28,7 @@ function noteKind(n: OrderNote): { fa: string; cls: string } {
 }
 
 export default function OrderDetailModal({ order, onClose }: Props) {
+  const cur = useCurrency()
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose()
@@ -52,9 +54,9 @@ export default function OrderDetailModal({ order, onClose }: Props) {
   const name =
     order.customer_name || [bill.first_name, bill.last_name].filter(Boolean).join(' ').trim() || `مشتری #${order.customer_id || '?'}`
   const unitOf = (l: (typeof items)[number]): string => {
-    if (l.price !== undefined && l.price !== '') return faNum(l.price)
+    if (l.price !== undefined && l.price !== '') return faNum(l.price) + ' ' + cur
     const q = Number(l.quantity) || 0
-    return q > 0 ? faNum(round2((Number(l.total) || 0) / q)) : '—'
+    return q > 0 ? faNum(round2((Number(l.total) || 0) / q)) + ' ' + cur : '—'
   }
 
   /* ------------------------- order notes ------------------------- */
@@ -138,23 +140,23 @@ export default function OrderDetailModal({ order, onClose }: Props) {
           <div className="order-summary">
             <div className="order-summary-item">
               <span className="stat-label">مجموع اقلام سفارش</span>
-              <span className="order-summary-val">{itemsTotal > 0 ? faNum(itemsTotal) : '—'}</span>
+              <span className="order-summary-val">{itemsTotal > 0 ? faNum(itemsTotal) + ' ' + cur : '—'}</span>
             </div>
             {discount > 0 && (
               <div className="order-summary-item">
                 <span className="stat-label">تخفیف</span>
-                <span className="order-summary-val od-discount">{faNum(discount)}</span>
+                <span className="order-summary-val od-discount">{faNum(discount)} {cur}</span>
               </div>
             )}
             {shipping > 0 && (
               <div className="order-summary-item">
                 <span className="stat-label">هزینهٔ ارسال</span>
-                <span className="order-summary-val">{faNum(shipping)}</span>
+                <span className="order-summary-val">{faNum(shipping)} {cur}</span>
               </div>
             )}
             <div className="order-summary-item">
               <span className="stat-label">مبلغ نهایی سفارش</span>
-              <span className="order-summary-val od-total">{faNum(order.total)}</span>
+              <span className="order-summary-val od-total">{faNum(order.total)} {cur}</span>
             </div>
           </div>
 
@@ -184,7 +186,7 @@ export default function OrderDetailModal({ order, onClose }: Props) {
                         </div>
                       )}
                     </div>
-                    <div className="od-item-total">{faNum(l.total)}</div>
+                    <div className="od-item-total">{faNum(l.total)} {cur}</div>
                   </div>
                 ))}
                 {(order.coupon_lines ?? []).length > 0 && (
@@ -197,7 +199,7 @@ export default function OrderDetailModal({ order, onClose }: Props) {
                         </div>
                       ))}
                     </div>
-                    <div className="od-item-total od-discount">−{faNum(order.coupon_lines!.reduce((a, c) => a + (Number(c.discount) || 0), 0))}</div>
+                    <div className="od-item-total od-discount">−{faNum(order.coupon_lines!.reduce((a, c) => a + (Number(c.discount) || 0), 0))} {cur}</div>
                   </div>
                 )}
                 {(order.shipping_lines ?? []).length > 0 && (
@@ -209,7 +211,7 @@ export default function OrderDetailModal({ order, onClose }: Props) {
                       </div>
                     </div>
                     <div className="od-item-total">
-                      {shipping > 0 ? amount(order.shipping_lines!.map((s) => s.total).find((t) => Number(t) > 0)) : 'رایگان'}
+                      {shipping > 0 ? (amount(order.shipping_lines!.map((s) => s.total).find((t) => Number(t) > 0)) !== '—' ? amount(order.shipping_lines!.map((s) => s.total).find((t) => Number(t) > 0)) + ' ' + cur : '—') : 'رایگان'}
                     </div>
                   </div>
                 )}

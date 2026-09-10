@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import type { Product, ProductDetail } from '../../shared/types'
 import { api } from '../api'
 import { faNum, toLatin } from '../lib/format'
+import { useCurrency } from '../lib/currency'
 import { IconAlert, IconCheck, IconRefresh, IconTag, IconX } from './Icons'
 
 interface Props {
@@ -27,6 +28,7 @@ function priceOf(p: { regular_price?: string; price?: string }): number {
 }
 
 export default function BulkPriceModal({ product, onClose, onChanged }: Props) {
+  const cur = useCurrency()
   const [detail, setDetail] = useState<ProductDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -235,7 +237,7 @@ export default function BulkPriceModal({ product, onClose, onChanged }: Props) {
                   </div>
 
                   <div className="pd-sec">
-                    <div className="pd-sec-title">{mode === 'fixed' ? 'قیمت جدید (تومان)' : 'درصد'}</div>
+                    <div className="pd-sec-title">{mode === 'fixed' ? `قیمت جدید (${cur})` : 'درصد'}</div>
                     <div className="pd-inline">
                       <input
                         className="input ltr"
@@ -252,7 +254,7 @@ export default function BulkPriceModal({ product, onClose, onChanged }: Props) {
                     </div>
                     {mode !== 'fixed' && (
                       <div className="f-hint" style={{ marginTop: 6 }}>
-                        در حالت درصدی، قیمت‌ها به نزدیک‌ترین ۱٬۰۰۰ تومان گرد می‌شوند؛ قیمت حراج دست‌نخورده می‌ماند.
+                        در حالت درصدی، قیمت‌ها به نزدیک‌ترین ۱٬۰۰۰ {cur} گرد می‌شوند؛ قیمت حراج دست‌نخورده می‌ماند.
                       </div>
                     )}
                   </div>

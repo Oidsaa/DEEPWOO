@@ -5,6 +5,7 @@ import { getSettings, saveSettings, clearSettings, sanitizeSettings, cacheTtlMs,
 import { cachedRun, clearCaches, bumpCacheVersion, initCache, flushCache, cacheStatus, patchCachedOrder, patchCacheKeepFresh, getSyncMark, setSyncMark } from './cache'
 import { appendLog, initLog, queryLog, flushLog } from './log'
 import { phonesMatch } from '../shared/phone'
+import { currencyLabel, DEFAULT_CURRENCY } from '../shared/currency'
 import {
   activeWarehouses,
   allocationForStatus,
@@ -18,6 +19,8 @@ import {
 import {
   testConnection,
   wpUsersMe,
+  getAuthUser,
+  fetchCurrencyCode,
   listCustomers,
   createCustomer,
   createOrder,
@@ -162,12 +165,41 @@ const FA_STATUS: Record<string, string> = {
 }
 const faStatus = (s: string): string => FA_STATUS[s] ?? s
 
+/* واحد پولی فروشگاه — یک بار از API خوانده و یک ساعت کش می‌شود؛ آخرین کد
+ * موفق «چسبنده» است تا قطعی موقت سایت، واحد را از قیمت‌ها حذف نکند. */
+let currencyCache: { code: string | null; at: number } | null = null
+const CURRENCY_TTL_MS = 60 * 60 * 1000
+
+async function storeCurrencyLabel(): Promise<string> {
+  const cfg = getSettings()
+  if (!cfg.siteUrl || !cfg.consumerKey || !cfg.consumerSecret) {
+    return currencyLabel(currencyCache?.code ?? '') || DEFAULT_CURRENCY
+  }
+  if (!currencyCache || Date.now() - currencyCache.at > CURRENCY_TTL_MS) {
+    try {
+      const code = await fetchCurrencyCode(cfg)
+      if (code) currencyCache = { code, at: Date.now() }
+      else if (currencyCache) currencyCache.at = Date.now()
+    } catch {
+      if (currencyCache) currencyCache.at = Date.now()
+    }
+  }
+  return currencyLabel(currencyCache?.code ?? '') || DEFAULT_CURRENCY
+}
+
 /** Record one action in the لاگ تغییرات, attributed to the کارشناس (API key owner). */
-function logAction(section: ChangeLogSection, action: string, title: string, details?: string, target?: string): void {
+function logAction(
+  section: ChangeLogSection,
+  action: string,
+  title: string,
+  details?: string,
+  target?: string,
+  amount?: number,
+): void {
   const s = getSettings()
-  appendLog({ user: s.userName?.trim() || 'نامشخص', section, action, title, details, target })
+  appendLog({ user: s.userName?.trim() || 'نامشخص', section, action, title, details, target, amount })
   // Mirror to the WP-side shared log so every device sees the same لاگ — best-effort.
-  void pushChangeLog(section, action, title, details, target)
+  void pushChangeLog(section, action, title, details, target, amount)
 }
 
 /** Fire-and-forget mirror of one log entry to the «WC App Change Log» plugin. */
@@ -177,11 +209,12 @@ async function pushChangeLog(
   title: string,
   details?: string,
   target?: string,
+  amount?: number,
 ): Promise<void> {
   const cfg = getSettings()
   if (!cfg.siteUrl || !cfg.consumerKey || !cfg.consumerSecret) return
   try {
-    await postChangeLog(cfg, { section, action, title, details, target, device: os.hostname() })
+    await postChangeLog(cfg, { section, action, title, details, target, device: os.hostname(), amount })
   } catch {
     /* پلاگین نصب نیست یا سایت در دسترس نیست — لاگ لوکال همچنان ردیف را دارد */
   }
@@ -195,18 +228,29 @@ async function pushChangeLog(
 async function resolveUserName(): Promise<void> {
   const cfg = getSettings()
   if (!cfg.siteUrl || !cfg.consumerKey || !cfg.consumerSecret) return
+  let name: string | null = null
+  // اول پلاگین لاگ (wcapp/v1/ping) — همان احراز هویتی ثبت لاگ؛ wp/v2 فقط پشتیبان.
   try {
-    const me = await wpUsersMe(cfg)
-    if (!me.name) return
-    const s = getSettings()
-    if (s.userName !== me.name) saveSettings({ ...s, userName: me.name })
+    name = await getAuthUser(cfg)
   } catch {
-    /* old store or security plugin — keep the existing name */
+    /* پلاگین نصب نیست یا سایت در دسترس نیست */
   }
+  if (!name) {
+    try {
+      name = (await wpUsersMe(cfg)).name || null
+    } catch {
+      /* احراز wp/v2 ممکن نشد */
+    }
+  }
+  if (!name) return
+  const s = getSettings()
+  if (s.userName !== name) saveSettings({ ...s, userName: name })
 }
 
 function registerIpc(): void {
   ipcMain.handle('settings:get', () => getSettings())
+
+  ipcMain.handle('woo:currency', () => storeCurrencyLabel())
 
   ipcMain.handle('settings:save', (_event, raw: Settings) => {
     const settings = sanitizeSettings(raw)
@@ -258,8 +302,8 @@ function registerIpc(): void {
     }
     try {
       const result = await testConnection(cfg)
-      // نام کارشناس (صاحب کلید) را تازه کن — مبنای «لاگ تغییرات».
-      void resolveUserName()
+      // نام کارشناس (صاحب کلید) را تازه کن — مبنای «لاگ تغییرات» و پیشخوان.
+      await resolveUserName()
       return {
         ok: true,
         message: 'اتصال برقرار شد — ' + result.totalCustomers.toLocaleString('fa-IR') + ' مشتری در فروشگاه موجود است.',
@@ -335,11 +379,12 @@ function registerIpc(): void {
         'ثبت سفارش سریع #' + (result.number ?? result.id),
         [
           result.customer_name || [result.billing?.first_name, result.billing?.last_name].filter(Boolean).join(' ').trim(),
-          result.total ? result.total + ' تومان' : '',
+          result.total ? result.total + ' ' + (await storeCurrencyLabel()) : '',
         ]
           .filter(Boolean)
           .join(' • '),
         '#' + result.id,
+        Number(result.total) || 0,
       )
 
       // سفارش سریعِ حضوری (sale-hazouri) بلافاصله در انبارِ سفارش‌سریع تخصیص

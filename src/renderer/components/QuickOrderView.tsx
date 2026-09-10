@@ -3,6 +3,7 @@ import type { ConnState, Customer, Order, Product, ProductVariation } from '../.
 import { api, isMock } from '../api'
 import { normalizePhone } from '../../shared/phone'
 import { avatarPalette, faDate, faDigits, faNum, orderStatusMeta } from '../lib/format'
+import { useCurrency } from '../lib/currency'
 import ReceiptModal from './ReceiptModal'
 import {
   IconAlert,
@@ -57,6 +58,7 @@ let keySeq = 1
 const nextKey = () => keySeq++
 
 export default function QuickOrderView({ configured, conn, storeName, onGoSettings }: Props) {
+  const cur = useCurrency()
   /* ------------------------------ customer ------------------------------ */
   const [phone, setPhone] = useState('')
   const [custLoading, setCustLoading] = useState(false)
@@ -449,7 +451,7 @@ export default function QuickOrderView({ configured, conn, storeName, onGoSettin
                           </span>
                           <span className="qo-match-meta">
                             {faNum(c.orders_count)} سفارش
-                            {Number(c.total_spent) > 0 ? ` · ${faNum(c.total_spent)} تومان` : ''}
+                            {Number(c.total_spent) > 0 ? ` · ${faNum(c.total_spent)} ${cur}` : ''}
                           </span>
                           <IconUserPlus size={16} />
                         </button>
@@ -528,7 +530,7 @@ export default function QuickOrderView({ configured, conn, storeName, onGoSettin
           </div>
           {lines.length > 0 && (
             <span className="qo-cust-picked">
-              <IconBag size={13} /> {faNum(lineCount)} عدد — {faNum(total)} تومان
+              <IconBag size={13} /> {faNum(lineCount)} عدد — {faNum(total)} {cur}
             </span>
           )}
         </div>
@@ -585,7 +587,7 @@ export default function QuickOrderView({ configured, conn, storeName, onGoSettin
                           {p.type === 'variable' ? 'محصول متغیر — انتخاب ترکیب' : p.categories[0]?.name ?? ''}
                         </span>
                       </span>
-                      <span className="qo-result-price">{p.type === 'variable' ? '' : `${faNum(p.price)} تومان`}</span>
+                      <span className="qo-result-price">{p.type === 'variable' ? '' : `${faNum(p.price)} ${cur}`}</span>
                       {p.type === 'variable' ? (
                         <span className="qo-add-txt">
                           <IconLayers size={14} /> ترکیب‌ها
@@ -630,7 +632,7 @@ export default function QuickOrderView({ configured, conn, storeName, onGoSettin
                           <span className="qo-var-combo">{v.attributes.map((a) => `${a.name}: ${a.option}`).join(' · ')}</span>
                           <span className="qo-var-meta">
                             <span className="qo-result-price">
-                              {faNum(price)} تومان
+                              {faNum(price)} {cur}
                               {v.stock_quantity !== null ? ` · موجودی ${faNum(v.stock_quantity)}` : ''}
                             </span>
                             {out && <span className="chip">ناموجود</span>}
@@ -844,7 +846,7 @@ export default function QuickOrderView({ configured, conn, storeName, onGoSettin
             <b>{faNum(lineCount)}</b> عدد کالا
           </span>
           <span>
-            جمع کل: <b className="qo-sum-total">{faNum(total)}</b> تومان
+            جمع کل: <b className="qo-sum-total">{faNum(total)}</b> {cur}
           </span>
           <span
             className={"pill " + (delivery === 'inperson' ? 'pill-green' : 'pill-teal')}

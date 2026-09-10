@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import type { ConnectionResult, ConnState, Product, Settings, WarehouseDef } from '../../shared/types'
+import type { ConnectionResult, ConnState, OrderStatusTotal, Product, Settings, WarehouseDef } from '../../shared/types'
 import { DEFAULT_WAREHOUSES, slugifyWarehouseId } from '../../shared/warehouses'
 import { api } from '../api'
 import { faDigits, ORDER_STATUS_META, toLatin } from '../lib/format'
+import { useCurrency } from '../lib/currency'
 import {
   IconAlert,
   IconCheck,
@@ -65,7 +66,19 @@ interface Props {
   onSaved: () => Promise<void>
 }
 
+/** Options for the per-warehouse order-status select — exactly the statuses registered on the store. */
+function statusOptions(site: OrderStatusTotal[] | null): Array<{ slug: string; label: string }> {
+  if (site) {
+    return site.map((s) => ({
+      slug: s.slug,
+      label: ORDER_STATUS_META[s.slug]?.fa ?? (s.name && s.name !== s.slug ? s.name : s.slug.replace(/-/g, ' ')),
+    }))
+  }
+  return Object.entries(ORDER_STATUS_META).map(([slug, m]) => ({ slug, label: m.fa }))
+}
+
 export default function SettingsView({ settings, conn, onSaved }: Props) {
+  const cur = useCurrency()
   const [form, setForm] = useState<Settings>({ siteUrl: '', consumerKey: '', consumerSecret: '' })
   const [showSecret, setShowSecret] = useState(false)
   const [savedFlash, setSavedFlash] = useState(false)
@@ -79,6 +92,24 @@ export default function SettingsView({ settings, conn, onSaved }: Props) {
   const [costRows, setCostRows] = useState<Product[] | null>(null)
   const [costLoading, setCostLoading] = useState(false)
   const [costErr, setCostErr] = useState<string | null>(null)
+  const [siteStatuses, setSiteStatuses] = useState<OrderStatusTotal[] | null>(null)
+
+  useEffect(() => {
+    let alive = true
+    api
+      .listOrderStatusTotals()
+      .then((list) => {
+        if (!alive) return
+        const usable = list.filter((s) => s.slug !== 'trash')
+        setSiteStatuses(usable.length > 0 ? usable : null)
+      })
+      .catch(() => {
+        if (alive) setSiteStatuses(null)
+      })
+    return () => {
+      alive = false
+    }
+  }, [])
 
   useEffect(() => {
     if (settings) setForm(settings)
@@ -393,6 +424,34 @@ export default function SettingsView({ settings, conn, onSaved }: Props) {
           </div>
         </div>
 
+        <div className="panel">
+          <div className="panel-head">
+            <div>
+              <div className="panel-title">راهنمای گام‌به‌گام اتصال</div>
+              <div className="panel-sub">ساخت کلید API از پیشخوان ووکامرس</div>
+            </div>
+          </div>
+          <div style={{ padding: '8px 22px 22px' }}>
+            <ol className="steps">
+              <li>
+                در پیشخوان وردپرس به مسیر <b>ووکامرس ← تنظیمات ← پیشرفته ← REST API</b> بروید.
+              </li>
+              <li>
+                روی <b>افزودن کلید</b> کلیک کنید؛ نام دلخواه بگذارید و دسترسی را روی <b>خواندن/نوشتن (Read/Write)</b> تنظیم کنید
+                و کاربر را روی <b>کاربر</b> بگذارید.
+              </li>
+              <li>
+                بعد از ثبت، <b>Consumer Key</b> و <b>Consumer Secret</b> نمایش داده می‌شوند — آن‌ها را کپی و در فرم
+                کناری وارد کنید.
+              </li>
+              <li>
+                روی <b>ذخیره تنظیمات</b> بزنید؛ اگر همه‌چیز درست باشد، اتصال به‌صورت خودکار بررسی و مشتریان در بخش
+                «مشتریان» نمایش داده می‌شوند.
+              </li>
+            </ol>
+          </div>
+        </div>
+
         <div className="panel" style={{ gridColumn: '1 / -1' }}>
           <div className="panel-head">
             <div>
@@ -703,7 +762,7 @@ export default function SettingsView({ settings, conn, onSaved }: Props) {
             <div>
               <div className="panel-title">قیمت تمام‌شدهٔ کالاها</div>
               <div className="panel-sub">
-                قیمت خرید هر کالا (تومان) — مبنای محاسبهٔ سود ناخالص در گزارشات. با جستجو کالا را پیدا و قیمت را ثبت
+                قیمت خرید هر کالا ({cur}) — مبنای محاسبهٔ سود ناخالص در گزارشات. با جستجو کالا را پیدا و قیمت را ثبت
                 کنید.
               </div>
             </div>
@@ -765,7 +824,7 @@ export default function SettingsView({ settings, conn, onSaved }: Props) {
                           value={val ? String(val) : ''}
                           onChange={(e) => setUnitCost(p.id, e.target.value)}
                         />
-                        <span className="f-hint">تومان</span>
+                        <span className="f-hint">{cur}</span>
                       </div>
                     </div>
                   )
@@ -794,7 +853,7 @@ export default function SettingsView({ settings, conn, onSaved }: Props) {
           </div>
         </div>
 
-        <div className="panel">
+        <div className="panel" style={{ gridColumn: '1 / -1' }}>
           <div className="panel-head">
             <div>
               <div className="panel-title">انبارهای فروشگاه</div>
@@ -804,61 +863,86 @@ export default function SettingsView({ settings, conn, onSaved }: Props) {
             </div>
           </div>
           <div className="form-body">
-            <div className="wh-def-list">
-              {warehouses.map((w, idx) => (
-                <div className="wh-def-row" key={idx}>
-                  <div>
-                    <label className="lbl">نام انبار</label>
-                    <input
-                      className="input"
-                      value={w.name}
-                      placeholder="مثلاً انبار کارگاه"
-                      onChange={(e) => updateWh(idx, { name: e.target.value })}
-                    />
-                  </div>
-                  <div>
-                    <label className="lbl">شناسه (لاتین)</label>
-                    <input
-                      className="input"
-                      dir="ltr"
-                      value={w.id}
-                      placeholder="kargah"
-                      onChange={(e) => updateWh(idx, { id: e.target.value.replace(/\s+/g, '-').toLowerCase() })}
-                      onBlur={(e) => updateWh(idx, { id: slugifyWarehouseId(e.target.value) })}
-                    />
-                  </div>
-                  <div>
-                    <label className="lbl">وضعیت سفارش این انبار</label>
-                    <select
-                      className="sel"
-                      value={w.orderStatus ?? ''}
-                      onChange={(e) => updateWh(idx, { orderStatus: e.target.value || undefined })}
-                    >
-                      <option value="">— بدون وضعیت —</option>
-                      {Object.entries(ORDER_STATUS_META).map(([slug, m]) => (
-                        <option key={slug} value={slug}>
-                          {m.fa}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="lbl">سفارش سریع</label>
-                    <label className="wh-sync">
-                      <input
-                        type="radio"
-                        name="quick-wh"
-                        checked={w.quickOrder === true}
-                        onChange={() => setQuickWh(idx)}
-                      />
-                      <span>تخصیص فروش حضوری به این انبار</span>
-                    </label>
-                  </div>
-                  <button type="button" className="btn-icon" title="حذف انبار" aria-label="حذف انبار" onClick={() => removeWh(idx)}>
-                    <IconTrash size={14} />
-                  </button>
-                </div>
-              ))}
+            <div className="tbl-wrap">
+              <table className="tbl tbl-whdefs">
+                <thead>
+                  <tr>
+                    <th>نام انبار</th>
+                    <th>شناسه (لاتین)</th>
+                    <th>وضعیت سفارش این انبار</th>
+                    <th>سفارش سریع</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {warehouses.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} style={{ textAlign: 'center', color: 'var(--ink-3)', padding: '18px 0' }}>
+                        هنوز انباری تعریف نشده است
+                      </td>
+                    </tr>
+                  ) : (
+                    warehouses.map((w, idx) => (
+                      <tr key={idx}>
+                        <td>
+                          <input
+                            className="input"
+                            value={w.name}
+                            placeholder="مثلاً انبار کارگاه"
+                            onChange={(e) => updateWh(idx, { name: e.target.value })}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            className="input wh-id-input"
+                            dir="ltr"
+                            value={w.id}
+                            placeholder="kargah"
+                            onChange={(e) => updateWh(idx, { id: e.target.value.replace(/\s+/g, '-').toLowerCase() })}
+                            onBlur={(e) => updateWh(idx, { id: slugifyWarehouseId(e.target.value) })}
+                          />
+                        </td>
+                        <td>
+                          <select
+                            className="sel"
+                            value={w.orderStatus ?? ''}
+                            onChange={(e) => updateWh(idx, { orderStatus: e.target.value || undefined })}
+                          >
+                            <option value="">— بدون وضعیت —</option>
+                            {statusOptions(siteStatuses).map((s) => (
+                              <option key={s.slug} value={s.slug}>
+                                {s.label}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="wh-quick-cell">
+                          <label className="wh-quick">
+                            <input
+                              type="radio"
+                              name="quick-wh"
+                              checked={w.quickOrder === true}
+                              onChange={() => setQuickWh(idx)}
+                            />
+                            <span>تخصیص فروش حضوری به این انبار</span>
+                          </label>
+                        </td>
+                        <td>
+                          <button
+                            type="button"
+                            className="btn-icon"
+                            title="حذف انبار"
+                            aria-label="حذف انبار"
+                            onClick={() => removeWh(idx)}
+                          >
+                            <IconTrash size={14} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
             </div>
 
             <div>
@@ -894,33 +978,6 @@ export default function SettingsView({ settings, conn, onSaved }: Props) {
           </div>
         </div>
 
-        <div className="panel">
-          <div className="panel-head">
-            <div>
-              <div className="panel-title">ساخت کلید API</div>
-              <div className="panel-sub">راهنمای گام‌به‌گام از پیشخوان ووکامرس</div>
-            </div>
-          </div>
-          <div style={{ padding: '8px 22px 22px' }}>
-            <ol className="steps">
-              <li>
-                در پیشخوان وردپرس به مسیر <b>ووکامرس ← تنظیمات ← پیشرفته ← REST API</b> بروید.
-              </li>
-              <li>
-                روی <b>افزودن کلید</b> کلیک کنید؛ نام دلخواه بگذارید و دسترسی را روی <b>خواندن/نوشتن (Read/Write)</b> تنظیم کنید
-                و کاربر را روی <b>کاربر</b> بگذارید.
-              </li>
-              <li>
-                بعد از ثبت، <b>Consumer Key</b> و <b>Consumer Secret</b> نمایش داده می‌شوند — آن‌ها را کپی و در فرم
-                کناری وارد کنید.
-              </li>
-              <li>
-                روی <b>ذخیره تنظیمات</b> بزنید؛ اگر همه‌چیز درست باشد، اتصال به‌صورت خودکار بررسی و مشتریان در بخش
-                «مشتریان» نمایش داده می‌شوند.
-              </li>
-            </ol>
-          </div>
-        </div>
       </div>
     </div>
   )

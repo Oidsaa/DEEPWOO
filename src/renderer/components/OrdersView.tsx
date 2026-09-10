@@ -4,6 +4,7 @@ import type { MouseEvent as ReactMouseEvent } from 'react'
 import type { ConnState, Order, OrderNote, OrdersListResult, OrderStatusTotal, ReceiptType } from '../../shared/types'
 import { api, isMock } from '../api'
 import { avatarPalette, faDate, faDigits, faNum, faTime, orderStatusMeta } from '../lib/format'
+import { useCurrency } from '../lib/currency'
 import { forceRefresh, reloadView } from '../lib/refresh'
 import { lastStoreSync } from '../lib/syncStamp'
 import { bulkPostalHtml, bulkStoreHtml, bulkWarehouseHtml, RECEIPT_KINDS, type BulkReceiptDoc, type ReceiptShop } from '../lib/print'
@@ -615,6 +616,7 @@ function OrderRow({
   onStatus: () => void
   onPrint: (e: ReactMouseEvent<HTMLButtonElement>) => void
 }) {
+  const cur = useCurrency()
   const pal = avatarPalette(order.customer_name ?? String(order.id))
   const meta = orderStatusMeta(order.status)
   const dt = new Date(order.date_created)
@@ -651,8 +653,9 @@ function OrderRow({
         </div>
       </td>
       <td>
-        <div className="cell-price" dir="ltr" style={{ textAlign: 'right' }}>
-          {faNum(order.total)}
+        <div className="cell-price" dir="ltr">
+          <span>{faNum(order.total)}</span>
+          <span className="cell-price-unit">{cur}</span>
         </div>
       </td>
       <td>

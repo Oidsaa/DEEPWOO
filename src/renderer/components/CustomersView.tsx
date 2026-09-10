@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import type { ConnState, Customer, CustomersResult, StoreStats } from '../../shared/types'
 import { api, isMock } from '../api'
 import { avatarPalette, faDate, faDigits, faNum, faTime } from '../lib/format'
+import { useCurrency } from '../lib/currency'
 import { forceRefresh } from '../lib/refresh'
 import { lastStoreSync } from '../lib/syncStamp'
 import AddCustomerModal from './AddCustomerModal'
@@ -39,6 +40,7 @@ function initialsOf(c: Customer): string {
 }
 
 export default function CustomersView({ configured, conn, storeName, onGoSettings, onUseDemo }: Props) {
+  const cur = useCurrency()
   const [searchInput, setSearchInput] = useState('')
   const [params, setParams] = useState({ search: '', page: 1, perPage: 100 })
   const [data, setData] = useState<CustomersResult | null>(null)
@@ -380,7 +382,7 @@ export default function CustomersView({ configured, conn, storeName, onGoSetting
                             </span>
                           </td>
                           <td>
-                            <span className="num cell-spent">{faNum(c.total_spent)}</span>
+                            <span className="num cell-spent">{faNum(c.total_spent)} {cur}</span>
                           </td>
                           <td>
                             <div className="cell-date">{faDate(c.date_created)}</div>

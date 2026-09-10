@@ -184,13 +184,64 @@ export async function wpUsersMe(cfg: WooConfig): Promise<{ id: number; name: str
 }
 
 /**
+ * Name of the API key's owner from the «WC App Change Log» plugin itself
+ * (wcapp/v1/ping authenticates with the same OAuth signature the log push
+ * uses). wp/v2/users/me only works where WooCommerce honors its key auth on
+ * the wp/ namespace — the plugin route is the reliable source.
+ */
+export async function getAuthUser(cfg: WooConfig): Promise<string | null> {
+  const { data } = await wooRequest<any>(cfg, 'GET', '/wcapp/v1/ping', {}, undefined, 'wp', 10000)
+  const name = String(data?.user ?? '').trim()
+  return name || null
+}
+
+/**
+ * Store currency code (واحد پولی). Primary source is the public data endpoint
+ * — no settings access needed. Custom codes from تومان plugins are missing
+ * from that list, so fall back to the general settings option.
+ */
+export async function fetchCurrencyCode(cfg: WooConfig): Promise<string | null> {
+  try {
+    const { data } = await wooRequest<any>(cfg, 'GET', '/data/currencies/current', {}, undefined, 'v3', 8000)
+    const code = String(data?.code ?? '').trim()
+    if (code) return code
+  } catch {
+    /* unknown/custom code or endpoint blocked — try settings */
+  }
+  try {
+    const { data } = await wooRequest<any>(
+      cfg,
+      'GET',
+      '/settings/general/woocommerce_currency',
+      {},
+      undefined,
+      'v3',
+      8000,
+    )
+    const value = String(data?.value ?? '').trim()
+    if (value) return value
+  } catch {
+    /* read-only key or security plugin */
+  }
+  return null
+}
+
+/**
  * Push one change-log entry to the WP-side «WC App Change Log» plugin
  * (/wp-json/wcapp/v1/log). The plugin verifies the same OAuth signature the
  * app already sends and attributes the entry to the API key's owner.
  */
 export async function postChangeLog(
   cfg: WooConfig,
-  entry: { section: ChangeLogSection; action: string; title: string; details?: string; target?: string; device?: string },
+  entry: {
+    section: ChangeLogSection
+    action: string
+    title: string
+    details?: string
+    target?: string
+    device?: string
+    amount?: number
+  },
 ): Promise<void> {
   await wooRequest(cfg, 'POST', '/wcapp/v1/log', {}, entry, 'wp', 10000)
 }
@@ -204,6 +255,7 @@ export async function getServerChangeLog(cfg: WooConfig, q: ChangeLogQuery): Pro
   if (q.search) params.search = q.search
   if (q.user) params.user = q.user
   if (q.section) params.section = q.section
+  if (q.action) params.action = q.action
 
   const { data } = await wooRequest<any>(cfg, 'GET', '/wcapp/v1/log', params, undefined, 'wp', 10000)
   return {

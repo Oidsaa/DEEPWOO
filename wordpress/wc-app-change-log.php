@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WC App Change Log
  * Description: جدول لاگ تغییرات مشترک برای داشبورد دسکتاپ ووکامرس — ثبت و خواندن اکشن کارشناس‌ها از طریق REST، با احراز هویت کلیدهای API ووکامرس (OAuth 1.0a یا query-string). نام کارشناس از صاحب کلید API خوانده می‌شود.
- * Version: 1.0.0
+ * Version: 1.1.0
  * Requires PHP: 7.2
  * Author: DEEPWOO
  */
@@ -11,7 +11,7 @@ defined( 'ABSPATH' ) || exit;
 
 class WcAppChangeLog {
 
-	const DB_VERSION   = '1.0';
+	const DB_VERSION   = '1.1';
 	const DB_OPT       = 'wcapp_log_db_version';
 	const REST_NS      = 'wcapp/v1';
 	const MAX_AGE_DAYS = 365;
@@ -52,6 +52,7 @@ class WcAppChangeLog {
 			section varchar(32) NOT NULL DEFAULT '',
 			action varchar(32) NOT NULL DEFAULT '',
 			title varchar(255) NOT NULL DEFAULT '',
+			amount bigint(20) NOT NULL DEFAULT 0,
 			details text NULL,
 			target varchar(191) NOT NULL DEFAULT '',
 			PRIMARY KEY  (id),
@@ -196,10 +197,11 @@ class WcAppChangeLog {
 					'section'   => $section,
 					'action'    => self::clean( $item['action'] ?? '', 32 ),
 					'title'     => $title,
+					'amount'    => isset( $item['amount'] ) ? (int) round( (float) $item['amount'] ) : 0,
 					'details'   => self::clean( $item['details'] ?? '', 5000 ),
 					'target'    => self::clean( $item['target'] ?? '', 191 ),
 				],
-				[ '%d', '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ]
+				[ '%d', '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s' ]
 			);
 
 			if ( $wpdb->insert_id ) {
@@ -250,6 +252,12 @@ class WcAppChangeLog {
 			array_push( $args, $like, $like, $like, $like );
 		}
 
+		$action = trim( (string) $request->get_param( 'action' ) );
+		if ( '' !== $action ) {
+			$where[] = 'action = %s';
+			$args[]  = $action;
+		}
+
 		$where_sql = $where ? 'WHERE ' . implode( ' AND ', $where ) : '';
 
 		if ( $args ) {
@@ -284,6 +292,7 @@ class WcAppChangeLog {
 					'section' => (string) $r['section'],
 					'action'  => (string) $r['action'],
 					'title'   => (string) $r['title'],
+					'amount'  => (int) ( $r['amount'] ?? 0 ),
 					'details' => (string) ( $r['details'] ?? '' ),
 					'target'  => (string) $r['target'],
 					'device'  => (string) $r['device'],

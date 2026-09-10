@@ -162,6 +162,7 @@ export const DEMO_SETTINGS: Settings = {
   storeAddress: 'تهران، خیابان ولیعصر، کوچهٔ آزادی، پلاک ۱۲',
   storePostcode: '۱۹۶۴۶۷۳۳۱۱',
   storePhone: '۰۲۱-۹۱۰۰۴۲۳۱',
+  userName: 'مدیر فروشگاه',
 }
 
 /**
@@ -747,12 +748,14 @@ const userOrderNotes = new Map<number, OrderNote[]>()
 
 const MOCK_LOG: ChangeLogEntry[] = [
   { ts: Date.now() - 8 * 60_000, user: 'انباردار فروشگاه', section: 'warehouses', action: 'save', title: 'ثبت موجودی انبار — محصول #1284', details: '۳ ترکیب • همگام با سایت' },
-  { ts: Date.now() - 26 * 60_000, user: 'مدیر فروشگاه', section: 'orders', action: 'status', title: 'تغییر وضعیت سفارش #10432', details: 'وضعیت جدید: انجام شده' },
-  { ts: Date.now() - 51 * 60_000, user: 'مدیر فروشگاه', section: 'orders', action: 'create', title: 'ثبت سفارش سریع #10433', details: 'سارا محمدی • ۱٬۲۴۰٬۰۰۰ تومان' },
+  { ts: Date.now() - 26 * 60_000, user: 'مدیر فروشگاه', section: 'orders', action: 'order-create', title: 'ثبت سفارش سریع #10433', details: 'سارا محمدی • 1240000 تومان', target: '#10433', amount: 1240000 },
+  { ts: Date.now() - 51 * 60_000, user: 'مدیر فروشگاه', section: 'orders', action: 'status', title: 'تغییر وضعیت سفارش #10432', details: 'وضعیت جدید: انجام شده' },
   { ts: Date.now() - 2 * 3_600_000, user: 'انباردار کارگاه', section: 'warehouses', action: 'save', title: 'ثبت موجودی انبار — محصول #971', details: '۱ ترکیب' },
   { ts: Date.now() - 3 * 3_600_000, user: 'انباردار فروشگاه', section: 'products', action: 'update', title: 'ویرایش محصول «شلوار جین راسته»', details: 'price' },
-  { ts: Date.now() - 5 * 3_600_000, user: 'مدیر فروشگاه', section: 'customers', action: 'create', title: 'افزودن مشتری', details: 'علی رضایی' },
-  { ts: Date.now() - 7 * 3_600_000, user: 'مدیر فروشگاه', section: 'settings', action: 'save', title: 'ذخیرهٔ تنظیمات' },
+  { ts: Date.now() - 5 * 3_600_000, user: 'مدیر فروشگاه', section: 'orders', action: 'order-create', title: 'ثبت سفارش سریع #10431', details: 'علی رضایی • 890000 تومان', target: '#10431', amount: 890000 },
+  { ts: Date.now() - 6 * 3_600_000, user: 'مدیر فروشگاه', section: 'customers', action: 'create', title: 'افزودن مشتری', details: 'علی رضایی' },
+  { ts: Date.now() - 7 * 3_600_000, user: 'مدیر فروشگاه', section: 'orders', action: 'order-create', title: 'ثبت سفارش سریع #10428', details: 'مریم کاظمی • 2150000 تومان', target: '#10428', amount: 2150000 },
+  { ts: Date.now() - 8 * 3_600_000, user: 'مدیر فروشگاه', section: 'settings', action: 'save', title: 'ذخیرهٔ تنظیمات' },
   { ts: Date.now() - 9 * 3_600_000, user: 'انباردار کارگاه', section: 'warehouses', action: 'save', title: 'ثبت موجودی انبار — محصول #455', details: '۲ ترکیب • همگام با سایت' },
 ]
 
@@ -1064,6 +1067,10 @@ export const mockApi: ApiBridge = {
     }
     return { productId: payload.productId, rows: out }
   },
+  async getCurrency(): Promise<string> {
+    await delay(30)
+    return 'تومان'
+  },
   async getChangeLog(query: ChangeLogQuery = {}): Promise<ChangeLogResult> {
     await delay(250)
     const perPage = Math.min(200, Math.max(10, Number(query.perPage) || 50))
@@ -1072,6 +1079,7 @@ export const mockApi: ApiBridge = {
     let list = [...MOCK_LOG].sort((a, b) => b.ts - a.ts)
     if (query.user) list = list.filter((e) => e.user === query.user)
     if (query.section) list = list.filter((e) => e.section === query.section)
+    if (query.action) list = list.filter((e) => e.action === query.action)
     if (search) {
       list = list.filter((e) =>
         [e.title, e.details ?? '', e.target ?? '', e.user].some((s) => s.toLowerCase().includes(search)),

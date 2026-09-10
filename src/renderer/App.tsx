@@ -4,6 +4,7 @@ import { api, bridgeMissing } from './api'
 import { DEMO_SETTINGS } from './lib/mock'
 import CustomersView from './components/CustomersView'
 import ChangeLogView from './components/ChangeLogView'
+import DashboardView from './components/DashboardView'
 import OrdersView from './components/OrdersView'
 import ProductsView from './components/ProductsView'
 import QuickOrderView from './components/QuickOrderView'
@@ -22,7 +23,7 @@ function hostOf(url: string): string | null {
 }
 
 export default function App() {
-  const [view, setView] = useState<ViewId>('customers')
+  const [view, setView] = useState<ViewId>('dashboard')
   const [settings, setSettings] = useState<Settings | null>(null)
   const [conn, setConn] = useState<ConnState>({ state: 'idle' })
 
@@ -36,6 +37,13 @@ export default function App() {
     setConn({ state: 'checking' })
     const r = await api.testConnection()
     setConn(r.ok ? { state: 'ok', message: r.message } : { state: 'fail', message: r.message })
+    if (r.ok) {
+      // نام کارشناس (صاحب کلید) همین حالا در main resolve و ذخیره شده — دوباره بخوان.
+      void api
+        .getSettings()
+        .then((fresh) => setSettings(fresh))
+        .catch(() => {})
+    }
     return r.ok
   }, [])
 
@@ -106,7 +114,17 @@ export default function App() {
         onNavigate={setView}
       />
       <main className="main">
-        {view === 'customers' ? (
+        {view === 'dashboard' ? (
+          <DashboardView
+            key={`${configured}-${settings?.siteUrl ?? ''}-${conn.state}`}
+            configured={configured}
+            conn={conn}
+            storeName={storeName}
+            userName={settings?.userName ?? null}
+            onGoSettings={() => setView('settings')}
+            onOpenLog={() => setView('log')}
+          />
+        ) : view === 'customers' ? (
           <CustomersView
             key={`${configured}-${settings?.siteUrl ?? ''}-${conn.state}`}
             configured={configured}

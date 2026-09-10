@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { ConnState, Product, ProductsResult } from '../../shared/types'
 import { api, isMock } from '../api'
-import { avatarPalette, faDate, faDigits, faNum, faTime } from '../lib/format'
+import { avatarPalette, faDigits, faNum, faTime } from '../lib/format'
+import { useCurrency } from '../lib/currency'
 import { forceRefresh, reloadView } from '../lib/refresh'
 import { lastStoreSync } from '../lib/syncStamp'
 import AddProductModal from './AddProductModal'
@@ -71,6 +72,7 @@ function typeFa(type: string): string {
 
 /** Price display: current price, struck-through regular price when on sale. */
 function PriceCell({ product }: { product: Product }) {
+  const cur = useCurrency()
   if (product.type === 'variable' && !product.price) {
     return (
       <span className="price-wrap">
@@ -78,12 +80,19 @@ function PriceCell({ product }: { product: Product }) {
       </span>
     )
   }
-  const price = product.price ? faNum(product.price) : '—'
   const hasSale = product.on_sale && product.sale_price && product.regular_price
   return (
     <span className="price-wrap">
-      {hasSale && <span className="price-old">{faNum(product.regular_price)}</span>}
-      <span className="price-current">{price}</span>
+      {hasSale && (
+        <span className="price-old">
+          <span>{faNum(product.regular_price)}</span>
+          <span className="price-unit">{cur}</span>
+        </span>
+      )}
+      <span className="price-current">
+        <span>{faNum(product.price)}</span>
+        <span className="price-unit">{cur}</span>
+      </span>
     </span>
   )
 }
@@ -389,13 +398,12 @@ export default function ProductsView({ configured, conn, storeName, onGoSettings
               <div className="tbl-wrap">
                 <table className="tbl tbl-products" style={dimmed ? { opacity: 0.45 } : undefined}>
                   <colgroup>
-                    <col style={{ width: '26%' }} />
-                    <col style={{ width: '11%' }} />
-                    <col style={{ width: '11%' }} />
-                    <col style={{ width: '8%' }} />
+                    <col style={{ width: '32%' }} />
                     <col style={{ width: '12%' }} />
                     <col style={{ width: '12%' }} />
-                    <col style={{ width: '20%' }} />
+                    <col style={{ width: '9%' }} />
+                    <col style={{ width: '14%' }} />
+                    <col style={{ width: '21%' }} />
                   </colgroup>
                   <thead>
                     <tr>
@@ -404,7 +412,6 @@ export default function ProductsView({ configured, conn, storeName, onGoSettings
                       <th>وضعیت</th>
                       <th>فروش</th>
                       <th>دسته‌بندی</th>
-                      <th>تاریخ ایجاد</th>
                       <th className="th-actions">عملیات</th>
                     </tr>
                   </thead>
@@ -532,19 +539,6 @@ function ProductRow({
   const firstImg = product.images[0]?.src
   const [imgBroken, setImgBroken] = useState(false)
   const pub = PUB_STATUS[product.status]
-  // Only show a tooltip with the full name when the name is actually cut off
-  // by the column (long names) — short names stay tooltip-free, like the
-  // icon buttons' hover tooltips.
-  const nameRef = useRef<HTMLSpanElement | null>(null)
-  const [nameOverflow, setNameOverflow] = useState(false)
-  useEffect(() => {
-    const el = nameRef.current
-    if (!el) return
-    const check = () => setNameOverflow(el.scrollWidth > el.clientWidth + 1)
-    check()
-    window.addEventListener('resize', check)
-    return () => window.removeEventListener('resize', check)
-  }, [product.name])
 
   return (
     <tr>
@@ -565,9 +559,7 @@ function ProductRow({
           )}
           <div style={{ minWidth: 0, flex: 1 }}>
             <div className="u-name" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-              <span ref={nameRef} className="u-name-txt" title={nameOverflow ? product.name : undefined}>
-                {product.name}
-              </span>
+              <span className="u-name-txt">{product.name}</span>
               {product.status !== 'publish' && pub && (
                 <span className={'pill ' + pub.cls} style={{ fontSize: 9.5, padding: '2px 7px' }}>
                   {pub.fa}
@@ -603,9 +595,6 @@ function ProductRow({
       </td>
       <td>
         <span className="cell-cat">{cats || '—'}</span>
-      </td>
-      <td>
-        <div className="cell-date">{faDate(product.date_created)}</div>
       </td>
       <td>
         <div className="cell-actions">
@@ -712,13 +701,12 @@ function SkeletonTable() {
     <div className="tbl-wrap">
       <table className="tbl tbl-products">
         <colgroup>
-          <col style={{ width: '26%' }} />
-          <col style={{ width: '11%' }} />
-          <col style={{ width: '11%' }} />
-          <col style={{ width: '8%' }} />
+          <col style={{ width: '32%' }} />
           <col style={{ width: '12%' }} />
           <col style={{ width: '12%' }} />
-          <col style={{ width: '20%' }} />
+          <col style={{ width: '9%' }} />
+          <col style={{ width: '14%' }} />
+          <col style={{ width: '21%' }} />
         </colgroup>
         <thead>
           <tr>
@@ -727,7 +715,6 @@ function SkeletonTable() {
             <th>وضعیت</th>
             <th>فروش</th>
             <th>دسته‌بندی</th>
-            <th>تاریخ ایجاد</th>
             <th>عملیات</th>
           </tr>
         </thead>
@@ -751,9 +738,6 @@ function SkeletonTable() {
               </td>
               <td>
                 <div className="sk sk-line" style={{ width: 50 }} />
-              </td>
-              <td>
-                <div className="sk sk-line" style={{ width: 90 }} />
               </td>
               <td>
                 <div className="sk sk-line" style={{ width: 90 }} />

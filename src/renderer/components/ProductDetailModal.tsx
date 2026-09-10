@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import type { ProductDetail, ProductVariation, VariationPatch } from '../../shared/types'
 import { api } from '../api'
 import { faDate, faDigits, faNum, toLatin } from '../lib/format'
+import { useCurrency } from '../lib/currency'
 import { IconAlert, IconBox, IconCheck, IconRefresh, IconX } from './Icons'
 
 interface Props {
@@ -54,6 +55,7 @@ function qtyErr(s: string, manageStock: boolean): string | null {
 }
 
 export default function ProductDetailModal({ productId, productName, onClose, onChanged }: Props) {
+  const cur = useCurrency()
   const [result, setResult] = useState<ProductDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -358,7 +360,7 @@ export default function ProductDetailModal({ productId, productName, onClose, on
                   <div className="pd-sec-title">ویرایش محصول</div>
                   <div className="v-edit" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))' }}>
                     <label className="field">
-                      <span className="lbl">قیمت (تومان)</span>
+                      <span className="lbl">قیمت ({cur})</span>
                       <input
                         className="input input-sm ltr"
                         dir="ltr"
@@ -469,6 +471,7 @@ function VariationCard({
   onDraft: (patch: Partial<VarDraft>) => void
   onSave: () => void
 }) {
+  const cur = useCurrency()
   const key = 'v:' + v.id
   const busy = saving === key
   const combo = v.attributes.map((a) => `${a.name}: ${a.option}`).join('، ')
@@ -553,8 +556,8 @@ function VariationCard({
         )}
         {v.price ? (
           <span className="v-cur-price">
-            {v.on_sale && v.regular_price ? <s>{faNum(v.regular_price)}</s> : null}{' '}
-            <b>{faNum(draft?.regular !== undefined && draft?.regular !== '' ? toLatin(draft.regular) : v.regular_price)}</b>
+            {v.on_sale && v.regular_price ? <s>{faNum(v.regular_price)} {cur}</s> : null}{' '}
+            <b>{faNum(draft?.regular !== undefined && draft?.regular !== '' ? toLatin(draft.regular) : v.regular_price)} {cur}</b>
           </span>
         ) : null}
         <div style={{ marginInlineStart: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>

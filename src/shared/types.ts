@@ -588,6 +588,8 @@ export interface ChangeLogEntry {
   title: string
   details?: string
   target?: string
+  /** مبلغ تومانی مرتبط با اکشن (فقط برای ثبت سفارش) — مبنای آمار «سفارش‌های من» در پیشخوان. */
+  amount?: number
 }
 
 export interface ChangeLogQuery {
@@ -598,6 +600,8 @@ export interface ChangeLogQuery {
   user?: string
   /** فقط بخش خاص (خالی = همه). */
   section?: ChangeLogSection | ''
+  /** فقط اکشن خاص مثل order-create (خالی = همه). */
+  action?: string
 }
 
 export interface ChangeLogResult {
@@ -664,6 +668,8 @@ export interface ApiBridge {
   saveWarehouseStock(payload: WarehouseStockSavePayload): Promise<WarehouseStockSaveResult>
   /** لاگ تغییرات: paged/filtered record of every write action performed in the app. */
   getChangeLog(query?: ChangeLogQuery): Promise<ChangeLogResult>
+  /** Store currency label read from the WooCommerce API (واحد پولی قیمت‌ها). */
+  getCurrency(): Promise<string>
 }
 
 /** Amounts for one sales-report slice (payments / statuses). */
@@ -955,7 +961,7 @@ export interface ReportsQuery {
   to?: string
 }
 
-export type ViewId = 'customers' | 'quick-order' | 'orders' | 'products' | 'warehouses' | 'reports' | 'log' | 'settings'
+export type ViewId = 'dashboard' | 'customers' | 'quick-order' | 'orders' | 'products' | 'warehouses' | 'reports' | 'log' | 'settings'
 export type ConnState =
   | { state: 'idle' }
   | { state: 'checking' }

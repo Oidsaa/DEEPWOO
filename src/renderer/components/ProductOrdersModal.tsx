@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import type { Order, Product, ProductOrdersResult } from '../../shared/types'
 import { api } from '../api'
 import { faDate, faDigits, faNum, orderStatusMeta } from '../lib/format'
+import { useCurrency } from '../lib/currency'
 import { IconAlert, IconBag, IconBox, IconRefresh, IconX } from './Icons'
 
 interface Props {
@@ -207,6 +208,7 @@ export default function ProductOrdersModal({ product, onClose }: Props) {
 }
 
 function ProductOrderCard({ order, productId }: { order: Order; productId: number }) {
+  const cur = useCurrency()
   const meta = orderStatusMeta(order.status)
   const lines = linesOf(order, productId)
   const lineTotal = lines.reduce((a, l) => a + l.quantity, 0)
@@ -220,7 +222,7 @@ function ProductOrderCard({ order, productId }: { order: Order; productId: numbe
           #{faDigits(order.number)}
         </span>
         <span className="order-date">{faDate(order.date_created)}</span>
-        <span className="order-card-total">{faNum(order.total)}</span>
+        <span className="order-card-total">{faNum(order.total)} {cur}</span>
       </div>
 
       <ul className="order-items">
@@ -228,7 +230,7 @@ function ProductOrderCard({ order, productId }: { order: Order; productId: numbe
           <li key={i}>
             <span className="order-item-name">{li.name}</span>
             <span className="order-item-qty">× {faNum(li.quantity)}</span>
-            <span className="order-item-total">{faNum(li.total)}</span>
+            <span className="order-item-total">{faNum(li.total)} {cur}</span>
           </li>
         ))}
       </ul>

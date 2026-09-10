@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { ConnState, ViewId } from '../../shared/types'
 import { api, isMock } from '../api'
 import { faDigits, faNum } from '../lib/format'
-import { IconBag, IconBox, IconChart, IconClock, IconGear, IconPlus, IconStore, IconUsers, IconWarehouse } from './Icons'
+import { IconBag, IconBox, IconChart, IconClock, IconGear, IconGrid, IconPlus, IconStore, IconUsers, IconWarehouse } from './Icons'
 
 interface Props {
   view: ViewId
@@ -80,11 +80,11 @@ export default function Sidebar({ view, configured, host, conn, storeName, userN
         <div className="sb-sec">منوها</div>
         <button
           type="button"
-          className={'sb-item' + (view === 'customers' ? ' active' : '')}
-          onClick={() => onNavigate('customers')}
+          className={'sb-item' + (view === 'dashboard' ? ' active' : '')}
+          onClick={() => onNavigate('dashboard')}
         >
-          <IconUsers size={18} />
-          <span>مشتریان</span>
+          <IconGrid size={18} />
+          <span>پیشخوان</span>
         </button>
         <button
           type="button"
@@ -123,6 +123,14 @@ export default function Sidebar({ view, configured, host, conn, storeName, userN
               {faNum(mismatchCount)}
             </span>
           )}
+        </button>
+        <button
+          type="button"
+          className={'sb-item' + (view === 'customers' ? ' active' : '')}
+          onClick={() => onNavigate('customers')}
+        >
+          <IconUsers size={18} />
+          <span>مشتریان</span>
         </button>
         <button
           type="button"

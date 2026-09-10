@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import type { Order } from '../../shared/types'
+import type { Order, OrderStatusTotal } from '../../shared/types'
 import { api } from '../api'
 import { faDigits, faNum, ORDER_STATUS_META } from '../lib/format'
 import { IconAlert, IconCheck, IconRefresh, IconSwap, IconX } from './Icons'
@@ -15,8 +15,11 @@ interface Props {
   onChanged: () => void
 }
 
-/** Statuses offered for switching, in a sensible workflow order. */
-const STATUS_ORDER = [
+/** Registered site statuses that make no sense as a change target. */
+const NON_TARGET = new Set(['trash', 'auto-draft', 'checkout-draft'])
+
+/** Fallback when the store's own status list cannot be read. */
+const FALLBACK_OPTIONS = [
   'processing',
   'completed',
   'on-hold',
@@ -31,21 +34,47 @@ const STATUS_ORDER = [
   'post-delivery',
   'tipax-delivery',
 ]
+  .filter((s) => ORDER_STATUS_META[s])
+  .map((s) => ({
+    value: s,
+    fa: ORDER_STATUS_META[s].fa,
+    cls: ORDER_STATUS_META[s].cls,
+  }))
 
-const OPTIONS = STATUS_ORDER.filter((s) => ORDER_STATUS_META[s]).map((s) => ({
-  value: s,
-  fa: ORDER_STATUS_META[s].fa,
-  cls: ORDER_STATUS_META[s].cls,
-}))
+function siteOptions(list: OrderStatusTotal[]): Array<{ value: string; fa: string; cls: string }> {
+  return list
+    .filter((s) => !NON_TARGET.has(s.slug))
+    .map((s) => ({
+      value: s.slug,
+      fa: ORDER_STATUS_META[s.slug]?.fa ?? (s.name && s.name !== s.slug ? s.name : s.slug.replace(/-/g, ' ')),
+      cls: ORDER_STATUS_META[s.slug]?.cls ?? 'pill-dim',
+    }))
+}
 
 export default function OrderStatusModal({ order, orderIds, onClose, onChanged }: Props) {
   const ids = order ? [order.id] : (orderIds ?? [])
   const target = order ? { id: order.id, label: '#' + faDigits(order.number) } : null
   const [selected, setSelected] = useState<string>(order?.status ?? '')
+  const [options, setOptions] = useState(FALLBACK_OPTIONS)
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
   const [done, setDone] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let alive = true
+    api
+      .listOrderStatusTotals()
+      .then((list) => {
+        if (!alive) return
+        const opts = siteOptions(list)
+        if (opts.length > 0) setOptions(opts)
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -121,7 +150,7 @@ export default function OrderStatusModal({ order, orderIds, onClose, onChanged }
           <div className="pd-sec">
             <div className="pd-sec-title">وضعیت جدید</div>
             <div className="st-grid">
-              {OPTIONS.map((o) => (
+              {options.map((o) => (
                 <button
                   key={o.value}
                   type="button"

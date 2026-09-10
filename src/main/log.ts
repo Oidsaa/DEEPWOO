@@ -50,6 +50,7 @@ export function appendLog(entry: Omit<ChangeLogEntry, 'ts'> & { ts?: number }): 
     title: entry.title,
     details: entry.details,
     target: entry.target,
+    amount: typeof entry.amount === 'number' && Number.isFinite(entry.amount) ? entry.amount : undefined,
   })
   if (entries.length > MAX_ENTRIES) entries = entries.slice(entries.length - MAX_ENTRIES)
   scheduleSave()
@@ -61,6 +62,7 @@ export function queryLog(q: ChangeLogQuery): ChangeLogResult {
   let list = [...entries].reverse()
   if (q.user) list = list.filter((e) => e.user === q.user)
   if (q.section) list = list.filter((e) => e.section === q.section)
+  if (q.action) list = list.filter((e) => e.action === q.action)
   if (search) {
     list = list.filter(
       (e) =>

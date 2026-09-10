@@ -45,6 +45,7 @@ const api: ApiBridge = {
   getWarehousesOverview: () => ipcRenderer.invoke('warehouses:overview'),
   saveWarehouseStock: (payload) => ipcRenderer.invoke('warehouses:save-stock', payload),
   getChangeLog: (query?: ChangeLogQuery) => ipcRenderer.invoke('log:query', query ?? {}),
+  getCurrency: () => ipcRenderer.invoke('woo:currency'),
 }
 
 contextBridge.exposeInMainWorld('api', api)
