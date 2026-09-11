@@ -43,6 +43,14 @@ export interface Settings {
    */
   warehouses?: WarehouseDef[]
   /**
+   * اکانت‌های کارشناسی (کلیدهای API) ثبت‌شده روی این دستگاه؛ consumerKey/
+   * consumerSecret همیشه همان اکانت فعال‌اند. دستگاه‌های قدیمی بدون این فیلد
+   * کلیدشان به‌صورت یک اکانت «main» دیده می‌شود.
+   */
+  accounts?: StaffAccount[]
+  /** شناسهٔ اکانت فعال از accounts (خالی = اولین اکانت). */
+  activeAccountId?: string
+  /**
    * Cache lifetime (seconds) for list reads (customers, orders, products,
    * status totals). Default 60. Bigger = faster menu switches but data may be
    * that old until the next write or manual refresh.
@@ -391,6 +399,8 @@ export interface OrderPayload {
     variation_id?: number
     quantity: number
   }>
+  /** Coupon codes to apply at the store (WooCommerce validates them itself). */
+  coupon_lines?: Array<{ code: string }>
 }
 
 /** Payload for updating an existing order's line items and addresses.
@@ -408,44 +418,6 @@ export interface OrderUpdatePayload {
   }>
   billing?: Partial<Order['billing']>
   shipping?: Partial<NonNullable<Order['shipping']>>
-}
-
-export interface OrderPayload {
-  customer_id?: number
-  customer_note?: string
-  payment_method?: string
-  payment_method_title?: string
-  /** Mark the order paid immediately (in-store cash / card-to-card sales). */
-  set_paid?: boolean
-  /** Status to create the order with (e.g. processing / pending-payment). */
-  status?: string
-  billing?: {
-    first_name?: string
-    last_name?: string
-    phone?: string
-    address_1?: string
-    address_2?: string
-    city?: string
-    state?: string
-    postcode?: string
-    country?: string
-  }
-  shipping?: {
-    first_name?: string
-    last_name?: string
-    address_1?: string
-    address_2?: string
-    city?: string
-    state?: string
-    postcode?: string
-    country?: string
-  }
-  line_items: Array<{
-    product_id: number
-    /** Required for variable products — picks the exact combination. */
-    variation_id?: number
-    quantity: number
-  }>
 }
 
 /** Document handed to the main process for BULK printing (one big HTML doc). */
@@ -728,10 +700,39 @@ export interface ApiBridge {
   getWarehousesOverview(): Promise<WarehousesOverview>
   /** ثبت انبارداری: save per-warehouse counts (+ optionally sync the site stock to their sum). */
   saveWarehouseStock(payload: WarehouseStockSavePayload): Promise<WarehouseStockSaveResult>
+  /**
+   * After a write that moves stock (order status change / item edit / quick
+   * order), main drops the stock-dependent caches and pings every window —
+   * انبارها و نشان‌های سایدبار خودکار تازه می‌شوند. Returns the unsubscribe fn.
+   */
+  onStockChanged(cb: () => void): () => void
+  /** اکانت‌های کارشناس (کلیدهای API) ثبت‌شده روی این دستگاه + اکانت فعال. */
+  listAccounts(): Promise<AccountsSnapshot>
+  /** افزودن اکانت کارشناس: کلید اعتبارسنجی و (با نام صاحبش) به فهرست اضافه می‌شود. */
+  addAccount(payload: { label?: string; consumerKey: string; consumerSecret: string }): Promise<AccountsSnapshot>
+  /** حذف اکانت؛ اگر فعال حذف شود، اولین اکانت باقی‌مانده فعال می‌شود. */
+  removeAccount(id: string): Promise<AccountsSnapshot>
+  /** سوئیچ به اکانت دیگر: کلید فعال عوض، کش باطل و نام کارشناس تازه می‌شود. */
+  switchAccount(id: string): Promise<{ ok: boolean; userName?: string | null; message?: string }>
   /** لاگ تغییرات: paged/filtered record of every write action performed in the app. */
   getChangeLog(query?: ChangeLogQuery): Promise<ChangeLogResult>
   /** Store currency label read from the WooCommerce API (واحد پولی قیمت‌ها). */
   getCurrency(): Promise<string>
+}
+
+/** فهرست اکانت‌های کارشناسی دستگاه + کدام اکنون فعال است. */
+export interface AccountsSnapshot {
+  activeId: string | null
+  accounts: StaffAccount[]
+}
+
+/** یک اکانت کارشناسی: کلیدهای API ووکامرس یک نفر از کارکنان. */
+export interface StaffAccount {
+  id: string
+  /** نام نمایشی در سوئیچر سایدبار (پیش‌فرض: نام صاحب کلید روی سایت). */
+  label: string
+  consumerKey: string
+  consumerSecret: string
 }
 
 /** Amounts for one sales-report slice (payments / statuses). */

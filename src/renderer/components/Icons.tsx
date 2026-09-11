@@ -170,6 +170,12 @@ export const IconChevronR = (p: P) => (
   </svg>
 )
 
+export const IconChevronD = (p: P) => (
+  <svg {...base(p)}>
+    <path d="m6 9 6 6 6-6" />
+  </svg>
+)
+
 export const IconRefresh = (p: P) => (
   <svg {...base(p)}>
     <path d="M3 12a9 9 0 0 1 15.36-6.36L21 8" />

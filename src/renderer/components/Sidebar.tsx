@@ -1,8 +1,20 @@
 import { useEffect, useState } from 'react'
-import type { ConnState, ViewId } from '../../shared/types'
+import type { AccountsSnapshot, ConnState, ViewId } from '../../shared/types'
 import { api, isMock } from '../api'
 import { faDigits, faNum } from '../lib/format'
-import { IconBag, IconBox, IconChart, IconClock, IconGear, IconGrid, IconPlus, IconStore, IconUsers, IconWarehouse } from './Icons'
+import {
+  IconBag,
+  IconBox,
+  IconChart,
+  IconChevronD,
+  IconClock,
+  IconGear,
+  IconGrid,
+  IconPlus,
+  IconStore,
+  IconUsers,
+  IconWarehouse,
+} from './Icons'
 
 interface Props {
   view: ViewId
@@ -13,14 +25,51 @@ interface Props {
   userName?: string | null
   /** لوگوی شخصی انتخاب‌شده در تنظیمات (data URL) — جایگزین کادر لوگوی پیش‌فرض. */
   logo?: string | null
+  /** اکانت‌های کارشناس (از App) — وقتی بیش از یکی باشد سوئیچر نمایش داده می‌شود. */
+  accounts?: AccountsSnapshot | null
+  /** در حال سوئیچ اکانت (دکمه‌ها غیرفعال می‌شوند). */
+  switchingAccount?: boolean
+  /** خطای سوئیچ اکانت — زیر دکمهٔ کارشناس نمایش داده می‌شود. */
+  switchError?: string | null
+  onSwitchAccount?: (id: string) => void
   onNavigate: (view: ViewId) => void
 }
 
-export default function Sidebar({ view, configured, host, conn, storeName, userName, logo, onNavigate }: Props) {
-  // سفارش‌های در حال پردازش (processing) — badge کنار منوی سفارش‌ها.
+export default function Sidebar({
+  view,
+  configured,
+  host,
+  conn,
+  storeName,
+  userName,
+  logo,
+  accounts,
+  switchingAccount,
+  switchError,
+  onSwitchAccount,
+  onNavigate,
+}: Props) {
+  // سفارش‌های در حال انجام (processing) — badge کنار منوی سفارش‌ها.
   const [processingCount, setProcessingCount] = useState<number | null>(null)
   // اقلامِ مغایرت‌دار (مجموع انبارها ≠ موجودی سایت) — badge کنار منوی انبارها.
   const [mismatchCount, setMismatchCount] = useState<number | null>(null)
+  // تغییر وضعیت سفارش/انبارداری در هر نمای دیگر → بج‌ها هم تازه شوند.
+  const [stockTick, setStockTick] = useState(0)
+  // منوی سوئیچ اکانت کارشناس.
+  const [acctOpen, setAcctOpen] = useState(false)
+
+  // Write actions in the main process push data:stock-changed → refetch both badges.
+  useEffect(() => api.onStockChanged(() => setStockTick((t) => t + 1)), [])
+
+  useEffect(() => {
+    if (!acctOpen) return
+    const close = (e: MouseEvent) => {
+      if ((e.target as HTMLElement).closest('.sb-user-wrap')) return
+      setAcctOpen(false)
+    }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [acctOpen])
 
   useEffect(() => {
     if (!configured) {
@@ -39,9 +88,9 @@ export default function Sidebar({ view, configured, host, conn, storeName, userN
     return () => {
       cancelled = true
     }
-    // Re-fetch when navigating to سفارش‌ها (a status change may have happened there)
-    // and when the connection state settles.
-  }, [configured, view, conn.state])
+    // Re-fetch when navigating to سفارش‌ها (a status change may have happened there),
+    // when the connection state settles, and after any stock-affecting write.
+  }, [configured, view, conn.state, stockTick])
 
   useEffect(() => {
     if (!configured) {
@@ -62,9 +111,9 @@ export default function Sidebar({ view, configured, host, conn, storeName, userN
     return () => {
       cancelled = true
     }
-    // Shares the cached 'warehouses-overview' snapshot — refetch on navigation
-    // (an انبارداری save or allocation may have changed it).
-  }, [configured, view, conn.state])
+    // Shares the cached 'warehouses-overview' snapshot — refetch on navigation,
+    // after an انبارداری save/allocation, and after any stock-affecting write.
+  }, [configured, view, conn.state, stockTick])
 
   return (
     <aside className="sidebar">
@@ -166,16 +215,73 @@ export default function Sidebar({ view, configured, host, conn, storeName, userN
 
       <div className="sb-foot">
         {renderConnection()}
-        {userName ? (
+        {accounts && accounts.accounts.length > 0 ? (
+          <div className="sb-user-wrap">
+            <button
+              type="button"
+              className="sb-user sb-user-btn"
+              onClick={() => setAcctOpen((o) => !o)}
+              title="سوئیچ بین اکانت‌های کارشناس"
+              aria-expanded={acctOpen}
+            >
+              <span className="sb-user-txt">کارشناس: {userName ?? activeLabel()}</span>
+              <IconChevronD size={13} className={acctOpen ? 'sb-chev flip' : 'sb-chev'} />
+            </button>
+            {acctOpen && (
+              <div className="sb-acct-menu" role="menu">
+                {accounts.accounts.map((a) => (
+                  <button
+                    key={a.id}
+                    type="button"
+                    role="menuitem"
+                    className={'sb-acct' + (a.id === accounts.activeId ? ' active' : '')}
+                    disabled={switchingAccount}
+                    onClick={() => {
+                      setAcctOpen(false)
+                      if (a.id !== accounts.activeId) onSwitchAccount?.(a.id)
+                    }}
+                  >
+                    <span className={'sb-acct-dot' + (a.id === accounts.activeId ? ' on' : '')} />
+                    <span className="sb-acct-label">{a.label}</span>
+                    {a.id === accounts.activeId && <span className="sb-acct-active">فعال</span>}
+                  </button>
+                ))}
+                <div className="sb-acct-sep" />
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="sb-acct sb-acct-manage"
+                  onClick={() => {
+                    setAcctOpen(false)
+                    onNavigate('settings')
+                  }}
+                >
+                  <IconGear size={13} />
+                  مدیریت اکانت‌ها
+                </button>
+              </div>
+            )}
+          </div>
+        ) : userName ? (
           <div className="sb-user" title="صاحب کلید API این دستگاه">
             کارشناس: {userName}
           </div>
         ) : null}
+        {switchError && (
+          <div className="sb-switch-err" role="alert">
+            {switchError}
+          </div>
+        )}
         {isMock && <div className="mock-chip">پیش‌نمایش با دادهٔ آزمایشی</div>}
         <div className="sb-ver">نسخهٔ {faDigits('1.1')}</div>
       </div>
     </aside>
   )
+
+  function activeLabel(): string | null {
+    const act = accounts?.accounts.find((a) => a.id === accounts?.activeId)
+    return act?.label ?? null
+  }
 
   function renderConnection() {
     if (!configured || conn.state === 'idle') {

@@ -39,6 +39,8 @@ interface ProductRow {
   siteStock: number | null
   /** تعداد ترکیب‌های ثبت‌شده برای هر انبار. */
   whRegistered: Record<string, number>
+  /** مجموع موجودیِ ثبت‌شدهٔ هر انبار (null = هیچ ترکیبی در این انبار ثبت نشده). */
+  whStock: Record<string, number | null>
   /** مجموع انبارهای ترکیب‌های ثبت‌شده. */
   sum: number | null
   status: 'unregistered' | 'mismatch' | 'ok'
@@ -89,6 +91,9 @@ export default function WarehousesView({ configured, conn, storeName, onGoSettin
     }
   }, [configured, loadCount])
 
+  // A status change (or any stock-affecting write) pushes data:stock-changed — reload.
+  useEffect(() => api.onStockChanged(() => reloadView(setLoadCount)), [])
+
   useEffect(() => {
     if (!savedFlash) return
     const t = window.setTimeout(() => setSavedFlash(false), 4200)
@@ -116,6 +121,11 @@ export default function WarehousesView({ configured, conn, storeName, onGoSettin
       for (const id of whIds) {
         whRegistered[id] = list.filter((i) => typeof i.warehouseStock[id] === 'number').length
       }
+      const whStock: Record<string, number | null> = {}
+      for (const id of whIds) {
+        const vals = list.map((i) => i.warehouseStock[id]).filter((v): v is number => typeof v === 'number')
+        whStock[id] = vals.length ? vals.reduce((a, b) => a + b, 0) : null
+      }
       out.push({
         productId,
         name: first.productName ?? first.name,
@@ -127,6 +137,7 @@ export default function WarehousesView({ configured, conn, storeName, onGoSettin
         mismatchCombos: list.filter((i) => i.delta !== null && i.delta !== 0).length,
         siteStock: siteVals.length ? siteVals.reduce((a, b) => a + b, 0) : null,
         whRegistered,
+        whStock,
         sum: sumVals.length ? sumVals.reduce((a, b) => a + b, 0) : null,
         status: registered.length < list.length ? 'unregistered' : hasMismatch ? 'mismatch' : 'ok',
         items: list,
@@ -475,15 +486,20 @@ export default function WarehousesView({ configured, conn, storeName, onGoSettin
                           </td>
                           {overview.warehouses.map((w) => {
                             const sv = simple.warehouseStock[w.id]
+                            const whv = p.whStock[w.id] ?? null
                             return (
                               <td key={w.id}>
                                 {p.isVariable ? (
-                                  <span
-                                    className="pill pill-dim"
-                                    title={`${faNum(p.whRegistered[w.id] ?? 0)} ترکیب از ${faNum(p.comboCount)} برای این انبار ثبت شده`}
-                                  >
-                                    {faNum(p.whRegistered[w.id] ?? 0)}/{faNum(p.comboCount)}
-                                  </span>
+                                  whv !== null ? (
+                                    <span
+                                      className="stock-qty num"
+                                      title={`مجموع موجودی ثبت‌شده — ${faNum(p.whRegistered[w.id] ?? 0)} ترکیب از ${faNum(p.comboCount)}`}
+                                    >
+                                      {faNum(whv)}
+                                    </span>
+                                  ) : (
+                                    <span className="pill pill-dim">—</span>
+                                  )
                                 ) : typeof sv === 'number' ? (
                                   <span className="stock-qty num">{faNum(sv)}</span>
                                 ) : (

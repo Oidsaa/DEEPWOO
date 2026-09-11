@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { ConnectionResult, ConnState, OrderStatusTotal, Product, Settings, WarehouseDef } from '../../shared/types'
+import type { AccountsSnapshot, ConnectionResult, ConnState, OrderStatusTotal, Product, Settings, WarehouseDef } from '../../shared/types'
 import { DEFAULT_WAREHOUSES, slugifyWarehouseId } from '../../shared/warehouses'
 import { api } from '../api'
 import { faDigits, ORDER_STATUS_META, toLatin } from '../lib/format'
@@ -25,6 +25,7 @@ import {
   IconTag,
   IconTrash,
   IconUpload,
+  IconUsers,
 } from './Icons'
 
 /* ------------------------------------------------------------------ */
@@ -68,6 +69,8 @@ interface Props {
   settings: Settings | null
   conn: ConnState
   onSaved: () => Promise<void>
+  /** بعد از افزودن/حذف اکانت: تنظیمات و وضعیت اتصال در App تازه شود (بدون پرش از تنظیمات). */
+  onAccountsChanged?: () => Promise<void>
 }
 
 /** رنگ‌های آمادهٔ تأکیدی — علاوه بر انتخابگر رنگ دلخواه. */
@@ -93,7 +96,7 @@ function statusOptions(site: OrderStatusTotal[] | null): Array<{ slug: string; l
   return Object.entries(ORDER_STATUS_META).map(([slug, m]) => ({ slug, label: m.fa }))
 }
 
-export default function SettingsView({ settings, conn, onSaved }: Props) {
+export default function SettingsView({ settings, conn, onSaved, onAccountsChanged }: Props) {
   const cur = useCurrency()
   const [form, setForm] = useState<Settings>({ siteUrl: '', consumerKey: '', consumerSecret: '' })
   const [showSecret, setShowSecret] = useState(false)
@@ -109,6 +112,30 @@ export default function SettingsView({ settings, conn, onSaved }: Props) {
   const [costLoading, setCostLoading] = useState(false)
   const [costErr, setCostErr] = useState<string | null>(null)
   const [siteStatuses, setSiteStatuses] = useState<OrderStatusTotal[] | null>(null)
+  // اکانت‌های کارشناس: فهرست + فرم افزودن.
+  const [accounts, setAccounts] = useState<AccountsSnapshot | null>(null)
+  const [acctBusy, setAcctBusy] = useState<string | null>(null)
+  const [acctErr, setAcctErr] = useState<string | null>(null)
+  const [acctOk, setAcctOk] = useState(false)
+  const [addOpen, setAddOpen] = useState(false)
+  const [newLabel, setNewLabel] = useState('')
+  const [newCk, setNewCk] = useState('')
+  const [newCs, setNewCs] = useState('')
+
+  const refreshAccounts = () => {
+    api
+      .listAccounts()
+      .then((snap) => {
+        setAccounts(snap)
+        // فرم اتصال باید همیشه کلیدهای اکانتِ فعال را نشان دهد.
+        setForm((f) => ({ ...f, accounts: snap.accounts, activeAccountId: snap.activeId ?? undefined }))
+      })
+      .catch(() => setAccounts(null))
+  }
+
+  useEffect(() => {
+    refreshAccounts()
+  }, [])
 
   useEffect(() => {
     let alive = true
@@ -305,6 +332,55 @@ export default function SettingsView({ settings, conn, onSaved }: Props) {
     await onSaved()
   }
 
+  /* ---- اکانت‌های کارشناس: افزودن / حذف ---- */
+
+  const handleAddAccount = async () => {
+    if (!newCk.trim() || !newCs.trim()) {
+      setAcctErr('کلید و رمز API اکانت جدید الزامی است.')
+      return
+    }
+    setAcctBusy('add')
+    setAcctErr(null)
+    setAcctOk(false)
+    try {
+      const snap = await api.addAccount({ label: newLabel, consumerKey: newCk, consumerSecret: newCs })
+      setAccounts(snap)
+      setNewLabel('')
+      setNewCk('')
+      setNewCs('')
+      setAddOpen(false)
+      setAcctOk(true)
+      if (onAccountsChanged) await onAccountsChanged()
+      refreshAccounts()
+    } catch (e) {
+      setAcctErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setAcctBusy(null)
+    }
+  }
+
+  const handleRemoveAccount = async (id: string) => {
+    setAcctBusy(id)
+    setAcctErr(null)
+    setAcctOk(false)
+    try {
+      const snap = await api.removeAccount(id)
+      setAccounts(snap)
+      if (onAccountsChanged) await onAccountsChanged()
+      refreshAccounts()
+    } catch (e) {
+      setAcctErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setAcctBusy(null)
+    }
+  }
+
+  useEffect(() => {
+    if (!acctOk) return
+    const t = window.setTimeout(() => setAcctOk(false), 4200)
+    return () => window.clearTimeout(t)
+  }, [acctOk])
+
   return (
     <div className="page fade-in">
       <div className="page-head">
@@ -482,6 +558,142 @@ export default function SettingsView({ settings, conn, onSaved }: Props) {
                 «مشتریان» نمایش داده می‌شوند.
               </li>
             </ol>
+          </div>
+        </div>
+
+        <div className="panel" style={{ gridColumn: '1 / -1' }}>
+          <div className="panel-head">
+            <div>
+              <div className="panel-title">اکانت‌های کارشناس</div>
+              <div className="panel-sub">
+                چند کارشناس می‌توانند روی همین دستگاه کار کنند — سوئیچ سریع از پایین سایدبار («کارشناس: نام»)
+              </div>
+            </div>
+            <div className="chip">
+              <IconUsers size={13} />
+              {accounts?.accounts.length ? faDigits(String(accounts.accounts.length)) + ' اکانت' : '—'}
+            </div>
+          </div>
+
+          <div className="form-body">
+            {acctErr && (
+              <div className="notice err">
+                <IconAlert size={17} />
+                <div>{acctErr}</div>
+              </div>
+            )}
+            {acctOk && (
+              <div className="notice ok fade-in">
+                <IconCheck size={17} />
+                <div>اکانت کارشناس اضافه شد و فعال شد.</div>
+              </div>
+            )}
+
+            {accounts && accounts.accounts.length > 0 ? (
+              <div className="acct-list">
+                {accounts.accounts.map((a) => {
+                  const isActive = a.id === accounts.activeId
+                  return (
+                    <div key={a.id} className={'acct-row' + (isActive ? ' active' : '')}>
+                      <span className={'acct-dot' + (isActive ? ' on' : '')} />
+                      <div className="acct-main">
+                        <span className="acct-name">{a.label}</span>
+                        <span className="acct-key" dir="ltr">
+                          ck_••••{a.consumerKey.slice(-6)}
+                        </span>
+                      </div>
+                      {isActive ? (
+                        <span className="pill pill-green">فعال</span>
+                      ) : (
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-ghost btn-danger-ghost"
+                          disabled={acctBusy !== null}
+                          onClick={() => handleRemoveAccount(a.id)}
+                        >
+                          {acctBusy === a.id ? <IconRefresh size={14} className="spin" /> : <IconTrash size={14} />}
+                          حذف
+                        </button>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            ) : (
+              <div className="empty-sub">هنوز اکانتی ثبت نشده — با ذخیرهٔ فرم «اتصال به فروشگاه»، اکانت فعلی ساخته می‌شود.</div>
+            )}
+
+            <div className="f-hint">
+              فرم «اتصال به فروشگاه» همیشه کلیدهای <b>اکانت فعال</b> را ویرایش می‌کند. برای اکانت دوم، کلید API جداگانه
+              (با کاربر وردپرس همان کارشناس) بسازید و اینجا اضافه کنید تا لاگ تغییرات و «سفارش‌های من» به درستی به او
+              نسبت داده شود.
+            </div>
+
+            {!addOpen ? (
+              <div className="form-actions">
+                <button type="button" className="btn btn-ghost" onClick={() => setAddOpen(true)} disabled={acctBusy !== null}>
+                  <IconPlus size={16} />
+                  افزودن اکانت کارشناس
+                </button>
+              </div>
+            ) : (
+              <div className="acct-add-form">
+                <div className="field">
+                  <label className="lbl" htmlFor="acct-label">
+                    نام کارشناس (اختیاری)
+                  </label>
+                  <input
+                    id="acct-label"
+                    className="input"
+                    type="text"
+                    placeholder="مثلاً: انبار — اگر خالی بماند نام صاحب کلید استفاده می‌شود"
+                    value={newLabel}
+                    onChange={(e) => setNewLabel(e.target.value)}
+                  />
+                </div>
+                <div className="field">
+                  <label className="lbl" htmlFor="acct-ck">
+                    کلید مصرف‌کننده (Consumer Key) <span className="req">*</span>
+                  </label>
+                  <input
+                    id="acct-ck"
+                    className="input ltr code-hint"
+                    type="text"
+                    dir="ltr"
+                    autoComplete="off"
+                    spellCheck={false}
+                    placeholder="ck_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                    value={newCk}
+                    onChange={(e) => setNewCk(e.target.value)}
+                  />
+                </div>
+                <div className="field">
+                  <label className="lbl" htmlFor="acct-cs">
+                    رمز مصرف‌کننده (Consumer Secret) <span className="req">*</span>
+                  </label>
+                  <input
+                    id="acct-cs"
+                    className="input ltr code-hint"
+                    type="password"
+                    dir="ltr"
+                    autoComplete="off"
+                    spellCheck={false}
+                    placeholder="cs_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                    value={newCs}
+                    onChange={(e) => setNewCs(e.target.value)}
+                  />
+                </div>
+                <div className="form-actions">
+                  <button type="button" className="btn btn-primary" onClick={handleAddAccount} disabled={acctBusy !== null}>
+                    {acctBusy === 'add' ? <IconRefresh size={16} className="spin" /> : <IconCheck size={16} />}
+                    {acctBusy === 'add' ? 'در حال بررسی کلیدها…' : 'افزودن اکانت'}
+                  </button>
+                  <button type="button" className="btn btn-ghost" onClick={() => setAddOpen(false)} disabled={acctBusy !== null}>
+                    انصراف
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

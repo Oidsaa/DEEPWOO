@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ConnState, Customer, Order, Product, ProductVariation } from '../../shared/types'
+import { IR_PROVINCES } from '../../shared/iran'
 import { api, isMock } from '../api'
 import { normalizePhone } from '../../shared/phone'
 import { avatarPalette, faDate, faDigits, faNum, orderStatusMeta } from '../lib/format'
@@ -78,8 +79,9 @@ export default function QuickOrderView({ configured, conn, storeName, onGoSettin
 
   /* ---------------------------- delivery / pay -------------------------- */
   const [delivery, setDelivery] = useState<DeliveryMode>('inperson')
-  const [addr, setAddr] = useState({ city: '', address1: '', address2: '', postcode: '' })
+  const [addr, setAddr] = useState({ state: '', city: '', address1: '', address2: '', postcode: '' })
   const [pay, setPay] = useState<PayMode>('cash')
+  const [coupon, setCoupon] = useState('')
 
   /* ------------------------------- submit ------------------------------- */
   const [submitting, setSubmitting] = useState(false)
@@ -239,8 +241,9 @@ export default function QuickOrderView({ configured, conn, storeName, onGoSettin
     setProdResults([])
     setPicking(null)
     setDelivery('inperson')
-    setAddr({ city: '', address1: '', address2: '', postcode: '' })
+    setAddr({ state: '', city: '', address1: '', address2: '', postcode: '' })
     setPay('cash')
+    setCoupon('')
     setError(null)
     setCreated(null)
     setReceiptOrder(null)
@@ -267,8 +270,8 @@ export default function QuickOrderView({ configured, conn, storeName, onGoSettin
       return
     }
     if (delivery === 'shipped') {
-      if (!addr.city.trim() || !addr.address1.trim() || !addr.postcode.trim()) {
-        setError('برای سفارش ارسالی، شهر، نشانی و کدپستی الزامی است.')
+      if (!addr.state || !addr.city.trim() || !addr.address1.trim()) {
+        setError('برای سفارش ارسالی، استان، شهر و نشانی الزامی است.')
         return
       }
     }
@@ -290,6 +293,7 @@ export default function QuickOrderView({ configured, conn, storeName, onGoSettin
 
       const bPhone = customer.billing?.phone?.trim() || normPhone
       const addrBlock = {
+        state: addr.state,
         address_1: addr.address1.trim(),
         address_2: addr.address2.trim(),
         city: addr.city.trim(),
@@ -303,9 +307,10 @@ export default function QuickOrderView({ configured, conn, storeName, onGoSettin
         quantity: l.qty,
       }))
 
-      // وضعیت سفارش تابع نوع دریافت است: حضوری → «فروش حضوری»، ارسالی → «در حال پردازش».
+      // وضعیت سفارش تابع نوع دریافت است: حضوری → «فروش حضوری»، ارسالی → «در حال انجام».
       // نقدی و کارت‌به‌کارت در محل تسویه می‌شوند؛ اقساطی اسنپ‌پی بدون تسویهٔ کامل ثبت می‌شود.
       const inPerson = delivery === 'inperson'
+      const code = coupon.trim()
       const order = await api.createOrder({
         customer_id: customer.id,
         payment_method: pay === 'cash' ? 'pos-cash' : pay === 'card' ? 'pos-card' : 'snappay-installment',
@@ -315,6 +320,7 @@ export default function QuickOrderView({ configured, conn, storeName, onGoSettin
         billing: { first_name: customer.first_name, last_name: customer.last_name, phone: bPhone, ...(billed ? addrBlock : {}) },
         ...(billed ? { shipping: { first_name: customer.first_name, last_name: customer.last_name, ...addrBlock } } : {}),
         line_items: lineItems,
+        ...(code ? { coupon_lines: [{ code }] } : {}),
       })
       setSelectedCust(customer)
       setCreated(order)
@@ -322,6 +328,7 @@ export default function QuickOrderView({ configured, conn, storeName, onGoSettin
       setLines([])
       setProdQuery('')
       setPicking(null)
+      setCoupon('')
       // سفارش ثبت شد — برای تحویلِ رسید به مشتری (مخصوصاً حضوری)، پیش‌نمایش رسید فروشگاه باز می‌شود.
       setReceiptOrder(order)
     } catch (e) {
@@ -749,6 +756,27 @@ export default function QuickOrderView({ configured, conn, storeName, onGoSettin
               <div className="qo-addr fade-in">
                 <div className="form-grid">
                   <div className="field">
+                    <label className="lbl" htmlFor="qo-state">
+                      استان <span className="req">*</span>
+                    </label>
+                    <select
+                      id="qo-state"
+                      className="sel"
+                      style={{ width: '100%' }}
+                      value={addr.state}
+                      onChange={(e) => setAddr({ ...addr, state: e.target.value })}
+                    >
+                      <option value="" disabled>
+                        انتخاب استان…
+                      </option>
+                      {IR_PROVINCES.map((p) => (
+                        <option key={p.code} value={p.code}>
+                          {p.fa}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="field">
                     <label className="lbl" htmlFor="qo-city">
                       شهر <span className="req">*</span>
                     </label>
@@ -786,7 +814,7 @@ export default function QuickOrderView({ configured, conn, storeName, onGoSettin
                   </div>
                   <div className="field">
                     <label className="lbl" htmlFor="qo-postcode">
-                      کدپستی <span className="req">*</span>
+                      کدپستی <span className="f-hint-inline">(اختیاری)</span>
                     </label>
                     <input
                       id="qo-postcode"
@@ -835,6 +863,22 @@ export default function QuickOrderView({ configured, conn, storeName, onGoSettin
                 ? 'نقدی / کارت‌به‌کارت — مبلغ همان‌جا دریافت و سفارش پرداخت‌شده ثبت می‌شود.'
                 : 'اقساطی اسنپ‌پی — پرداخت کامل انجام نشده و سفارش بدون تسویه ثبت می‌شود.'}
             </div>
+
+            <div className="field" style={{ marginTop: 12 }}>
+              <label className="lbl" htmlFor="qo-coupon">
+                کد تخفیف <span className="f-hint-inline">(اختیاری)</span>
+              </label>
+              <input
+                id="qo-coupon"
+                className="input ltr"
+                dir="ltr"
+                autoComplete="off"
+                value={coupon}
+                onChange={(e) => setCoupon(e.target.value)}
+                placeholder="WELCOME10"
+              />
+              <div className="f-hint">در صورت معتبر بودن، تخفیف هنگام ثبت در فروشگاه روی سفارش اعمال می‌شود.</div>
+            </div>
           </div>
         </section>
       </div>
@@ -853,7 +897,7 @@ export default function QuickOrderView({ configured, conn, storeName, onGoSettin
             style={{ alignSelf: 'center' }}
             title="وضعیتی که سفارش با آن ثبت می‌شود"
           >
-            {delivery === 'inperson' ? 'فروش حضوری' : 'در حال پردازش'}
+            {delivery === 'inperson' ? 'فروش حضوری' : orderStatusMeta('processing').fa}
           </span>
         </div>
         <button type="button" className="btn btn-primary qo-submit" onClick={submit} disabled={submitting || !configured}>

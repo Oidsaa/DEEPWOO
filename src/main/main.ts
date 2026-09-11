@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import os from 'node:os'
 import path from 'node:path'
 import { getSettings, saveSettings, clearSettings, sanitizeSettings, cacheTtlMs, cacheStaleMs } from './settings'
-import { cachedRun, clearCaches, bumpCacheVersion, initCache, flushCache, cacheStatus, patchCachedOrder, patchCacheKeepFresh, getSyncMark, setSyncMark } from './cache'
+import { cachedRun, clearCaches, bumpCacheVersion, dropCacheKey, initCache, flushCache, cacheStatus, patchCachedOrder, patchCacheKeepFresh, getSyncMark, setSyncMark } from './cache'
 import { appendLog, initLog, queryLog, flushLog } from './log'
 import { phonesMatch } from '../shared/phone'
 import { currencyLabel, DEFAULT_CURRENCY } from '../shared/currency'
@@ -48,6 +48,7 @@ import {
   getServerChangeLog,
 } from './woo'
 import type {
+  AccountsSnapshot,
   ChangeLogQuery,
   ChangeLogSection,
   Customer,
@@ -224,6 +225,18 @@ async function pushChangeLog(
 }
 
 /**
+ * بعد از هر نوشته‌ای که موجودی سایت/انبار را عوض می‌کند (تغییر وضعیت سفارش،
+ * ویرایش اقلام، ثبت سفارش سریع) نما‌های وابسته به موجودی از نو خوانده و
+ * رندرر باخبر می‌شود تا بخش انبارها خودکار تازه شود — بدون invalidate کل کش.
+ */
+function invalidateStockDependents(): void {
+  dropCacheKey('warehouses-overview')
+  dropCacheKey('product-catalog')
+  dropCacheKey('order-status-totals')
+  for (const w of BrowserWindow.getAllWindows()) w.webContents.send('data:stock-changed')
+}
+
+/**
  * Resolve + persist the display name of the API key's WordPress owner
  * (wp/v2/users/me). Called after a successful connection test and on startup;
  * failure keeps whatever name exists (or «نامشخص»).
@@ -268,6 +281,127 @@ function registerIpc(): void {
     clearSettings()
     bumpCacheVersion()
     return { ok: true }
+  })
+
+  /* ---- اکانت‌های کارشناس (چند-کاربری روی یک دستگاه) ---- */
+
+  function accountSnapshot(): AccountsSnapshot {
+    const s = getSettings()
+    const accounts = s.accounts ?? []
+    const activeId =
+      s.activeAccountId && accounts.some((a) => a.id === s.activeAccountId)
+        ? s.activeAccountId
+        : (accounts[0]?.id ?? null)
+    return { activeId, accounts }
+  }
+
+  ipcMain.handle('accounts:list', () => accountSnapshot())
+
+  ipcMain.handle('accounts:add', async (_event, payload: { label?: string; consumerKey: string; consumerSecret: string }) => {
+    const s = getSettings()
+    if (!s.siteUrl) throw new Error('ابتدا آدرس سایت را در تنظیمات ذخیره کنید.')
+    const ck = String(payload?.consumerKey ?? '').trim()
+    const cs = String(payload?.consumerSecret ?? '').trim()
+    if (!ck || !cs) throw new Error('کلید و رمز API الزامی است.')
+    const existing = s.accounts ?? (s.consumerKey && s.consumerSecret
+      ? [{ id: 'main', label: s.userName ?? 'کارشناس اصلی', consumerKey: s.consumerKey, consumerSecret: s.consumerSecret }]
+      : [])
+    if (existing.some((a) => a.consumerKey === ck && a.consumerSecret === cs)) {
+      throw new Error('این اکانت قبلاً اضافه شده است.')
+    }
+    // برچسب پیش‌فرض = نام صاحب کلید (پلاگین لاگ، سپس wp/v2) — اکانت بی‌اعتبار رد می‌شود.
+    let label = String(payload?.label ?? '').trim()
+    const probe: Settings = { ...s, consumerKey: ck, consumerSecret: cs }
+    if (!label) {
+      try {
+        label = (await getAuthUser(probe)) ?? ''
+      } catch {
+        /* پلاگین نصب نیست */
+      }
+      if (!label) {
+        try {
+          label = (await wpUsersMe(probe)).name || ''
+        } catch {
+          /* احراز wp/v2 ناموفق */
+        }
+      }
+      if (!label) throw new Error('کلیدهای API معتبر نیستند — احراز هویت با این کلیدها ممکن نشد.')
+    }
+    const id = 'acct-' + Date.now().toString(36)
+    const next: Settings = {
+      ...s,
+      accounts: [...existing, { id, label, consumerKey: ck, consumerSecret: cs }],
+      activeAccountId: id,
+      consumerKey: ck,
+      consumerSecret: cs,
+      userName: label,
+    }
+    saveSettings(sanitizeSettings(next))
+    // کلید جدید ممکن است داده‌های متفاوتی ببیند — همهٔ کش باطل شود.
+    bumpCacheVersion()
+    logAction('settings', 'account-add', `افزودن اکانت کارشناس: ${label}`)
+    return accountSnapshot()
+  })
+
+  ipcMain.handle('accounts:remove', (_event, id: string) => {
+    const s = getSettings()
+    const accounts = s.accounts ?? []
+    const target = accounts.find((a) => a.id === id)
+    if (!target) throw new Error('اکانت موردنظر پیدا نشد.')
+    const remaining = accounts.filter((a) => a.id !== id)
+    if (remaining.length === 0) {
+      throw new Error('حداقل یک اکانت باید باقی بماند — ابتدا اکانت دیگری اضافه کنید.')
+    }
+    const activeId = s.activeAccountId === id ? remaining[0].id : (s.activeAccountId ?? remaining[0].id)
+    const act = remaining.find((a) => a.id === activeId)
+    saveSettings(
+      sanitizeSettings({
+        ...s,
+        accounts: remaining,
+        activeAccountId: activeId,
+        consumerKey: act!.consumerKey,
+        consumerSecret: act!.consumerSecret,
+      }),
+    )
+    bumpCacheVersion()
+    logAction('settings', 'account-remove', `حذف اکانت کارشناس: ${target.label}`)
+    return accountSnapshot()
+  })
+
+  ipcMain.handle('accounts:switch', async (_event, id: string) => {
+    const s = getSettings()
+    const acc = (s.accounts ?? []).find((a) => a.id === id)
+    if (!acc) return { ok: false, message: 'اکانت موردنظر پیدا نشد.' }
+    if (s.activeAccountId === id) return { ok: true, userName: s.userName ?? acc.label }
+    saveSettings(
+      sanitizeSettings({
+        ...s,
+        activeAccountId: id,
+        consumerKey: acc.consumerKey,
+        consumerSecret: acc.consumerSecret,
+      }),
+    )
+    bumpCacheVersion()
+    // نام صاحب کلید جدید — اول پلاگین، بعد wp/v2؛ در نبود هر دو، برچسب اکانت.
+    let userName = acc.label
+    const cfg = getSettings()
+    try {
+      const n = await getAuthUser(cfg)
+      if (n) userName = n
+    } catch {
+      /* پلاگین نصب نیست */
+    }
+    if (userName === acc.label) {
+      try {
+        userName = (await wpUsersMe(cfg)).name || acc.label
+      } catch {
+        /* برچسب اکانت می‌ماند */
+      }
+    }
+    const cur = getSettings()
+    if (cur.userName !== userName) saveSettings({ ...cur, userName })
+    logAction('settings', 'account-switch', `سوئیچ به اکانت کارشناس: ${userName}`)
+    return { ok: true, userName }
   })
 
   // دکمه‌های «به‌روزرسانی» در UI این را صدا می‌زنند تا داده از نو همگام شود.
@@ -351,7 +485,15 @@ function registerIpc(): void {
       throw new Error('تنظیمات API کامل نشده است.')
     }
     try {
-      const result = await createCustomer(cfg, payload ?? {})
+      const body: CustomerPayload = { ...(payload ?? {}) }
+      if (!String(body.email ?? '').trim()) {
+        // وردپرس ایمیلِ بدون @دامنه را با «ایمیل نامعتبر» رد می‌کند؛ بنابراین
+        // فقط شماره ممکن نیست — شماره + دامنهٔ رزروشدهٔ غیرقابل‌دریافت می‌گذاریم
+        // تا هم فرم معتبر باشد و هم به صندوقِ دامنهٔ فروشگاه تحویل نشود.
+        const local = String(body.username ?? body.billing?.phone ?? '').replace(/[^0-9A-Za-z]/g, '')
+        if (local) body.email = `${local}@no-reply.invalid`
+      }
+      const result = await createCustomer(cfg, body)
       bumpCacheVersion()
       logAction(
         'customers',
@@ -399,6 +541,7 @@ function registerIpc(): void {
             const allocated = await allocateOrder(cfg, cfg, result, quick.id)
             if (allocated) {
               if (!patchCachedOrder(allocated)) bumpCacheVersion()
+              invalidateStockDependents()
               return allocated
             }
           } catch (err) {
@@ -579,6 +722,8 @@ function registerIpc(): void {
         }
       }
       logAction('orders', 'order-status', `تغییر وضعیت سفارش #${orderId}`, 'وضعیت جدید: ' + faStatus(status), '#' + orderId)
+      // ووکامرس با تغییر وضعیت موجودی را کم/زیاد کرده — انبارها خودکار تازه شوند.
+      invalidateStockDependents()
       return result
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
@@ -613,6 +758,8 @@ function registerIpc(): void {
         (payload.billing || payload.shipping ? ' · آدرس به‌روزرسانی شد' : '') +
         (dance ? ' · وضعیت: ' + faStatus(result.status) : '')
       logAction('orders', 'order-update', `ویرایش سفارش #${orderId}`, detail, '#' + orderId)
+      // رقصِ وضعیتِ ویرایش موجودی سایت را جابه‌جا کرده — انبارها تازه شوند.
+      invalidateStockDependents()
       return result
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))

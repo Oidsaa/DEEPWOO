@@ -45,6 +45,15 @@ const api: ApiBridge = {
   listProductOrders: (productId: number) => ipcRenderer.invoke('wc:product-orders', productId),
   getWarehousesOverview: () => ipcRenderer.invoke('warehouses:overview'),
   saveWarehouseStock: (payload) => ipcRenderer.invoke('warehouses:save-stock', payload),
+  onStockChanged: (cb: () => void) => {
+    const listener = () => cb()
+    ipcRenderer.on('data:stock-changed', listener)
+    return () => ipcRenderer.removeListener('data:stock-changed', listener)
+  },
+  listAccounts: () => ipcRenderer.invoke('accounts:list'),
+  addAccount: (payload) => ipcRenderer.invoke('accounts:add', payload),
+  removeAccount: (id: string) => ipcRenderer.invoke('accounts:remove', id),
+  switchAccount: (id: string) => ipcRenderer.invoke('accounts:switch', id),
   getChangeLog: (query?: ChangeLogQuery) => ipcRenderer.invoke('log:query', query ?? {}),
   getCurrency: () => ipcRenderer.invoke('woo:currency'),
 }

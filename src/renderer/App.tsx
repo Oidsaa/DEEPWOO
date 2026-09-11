@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { ConnState, Settings, ViewId } from '../shared/types'
+import type { AccountsSnapshot, ConnState, Settings, ViewId } from '../shared/types'
 import { api, bridgeMissing } from './api'
 import { applyAppearance } from './lib/theme'
 import { DEMO_SETTINGS } from './lib/mock'
@@ -27,8 +27,23 @@ export default function App() {
   const [view, setView] = useState<ViewId>('dashboard')
   const [settings, setSettings] = useState<Settings | null>(null)
   const [conn, setConn] = useState<ConnState>({ state: 'idle' })
+  // اکانت‌های کارشناس (برای سوئیچر سایدبار) + خطای سوئیچ.
+  const [accounts, setAccounts] = useState<AccountsSnapshot | null>(null)
+  const [switching, setSwitching] = useState(false)
+  const [switchErr, setSwitchErr] = useState<string | null>(null)
 
   const isConfigured = (s: Settings | null): boolean => !!(s?.siteUrl && s?.consumerKey && s?.consumerSecret)
+
+  const refreshAccounts = useCallback(() => {
+    api
+      .listAccounts()
+      .then(setAccounts)
+      .catch(() => setAccounts(null))
+  }, [])
+
+  useEffect(() => {
+    refreshAccounts()
+  }, [refreshAccounts, settings?.activeAccountId, settings?.accounts?.length])
 
   const checkConnection = useCallback(async (cfg: Settings): Promise<boolean> => {
     if (!cfg.siteUrl || !cfg.consumerKey || !cfg.consumerSecret) {
@@ -78,6 +93,44 @@ export default function App() {
     if (ok && isConfigured(s)) setView('customers')
   }, [checkConnection])
 
+  /** سوئیچ اکانت کارشناس از سایدبار: کلیدها عوض، کش باطل، اتصال دوباره بررسی، نماها از نو. */
+  const handleSwitchAccount = useCallback(
+    async (id: string) => {
+      setSwitching(true)
+      setSwitchErr(null)
+      try {
+        const r = await api.switchAccount(id)
+        if (!r.ok) {
+          setSwitchErr(r.message ?? 'سوئیچ اکانت ناموفق بود.')
+          return
+        }
+        const s = await api.getSettings()
+        setSettings(s)
+        setView('dashboard')
+        if (isConfigured(s)) await checkConnection(s)
+      } catch (e) {
+        setSwitchErr(e instanceof Error ? e.message : String(e))
+      } finally {
+        setSwitching(false)
+      }
+    },
+    [checkConnection],
+  )
+
+  useEffect(() => {
+    if (!switchErr) return
+    const t = window.setTimeout(() => setSwitchErr(null), 5200)
+    return () => window.clearTimeout(t)
+  }, [switchErr])
+
+  /** پس از افزودن/حذف اکانت در تنظیمات: تنظیمات + اتصال تازه شود، بدون پرش از تنظیمات. */
+  const handleAccountsChanged = useCallback(async () => {
+    const s = await api.getSettings()
+    setSettings(s)
+    refreshAccounts()
+    if (isConfigured(s)) await checkConnection(s)
+  }, [checkConnection, refreshAccounts])
+
   /** Demo preview only: explicitly load the built-in sample dataset. */
   const handleUseDemo = useCallback(async () => {
     // ترجیحات ظاهری دستگاهی هستند (تم/رنگ/لوگو) — با ورود به حالت نمایشی پاک نشوند.
@@ -113,6 +166,8 @@ export default function App() {
   const configured = isConfigured(settings)
   /** Store name from «اطلاعات رسید» (Settings), shown across the UI. */
   const storeName = (settings?.storeName ?? '').trim() || null
+  /** Views remount when the account changes too — every view refetches fresh data. */
+  const viewKey = `${configured}-${settings?.siteUrl ?? ''}-${settings?.activeAccountId ?? ''}-${conn.state}`
 
   return (
     <div className="app">
@@ -124,12 +179,16 @@ export default function App() {
         storeName={storeName}
         userName={settings?.userName ?? null}
         logo={settings?.storeLogo ?? null}
+        accounts={accounts}
+        switchingAccount={switching}
+        switchError={switchErr}
+        onSwitchAccount={handleSwitchAccount}
         onNavigate={setView}
       />
       <main className="main">
         {view === 'dashboard' ? (
           <DashboardView
-            key={`${configured}-${settings?.siteUrl ?? ''}-${conn.state}`}
+            key={viewKey}
             configured={configured}
             conn={conn}
             storeName={storeName}
@@ -139,7 +198,7 @@ export default function App() {
           />
         ) : view === 'customers' ? (
           <CustomersView
-            key={`${configured}-${settings?.siteUrl ?? ''}-${conn.state}`}
+            key={viewKey}
             configured={configured}
             conn={conn}
             storeName={storeName}
@@ -148,7 +207,7 @@ export default function App() {
           />
         ) : view === 'orders' ? (
           <OrdersView
-            key={`${configured}-${settings?.siteUrl ?? ''}-${conn.state}`}
+            key={viewKey}
             configured={configured}
             conn={conn}
             storeName={storeName}
@@ -156,7 +215,7 @@ export default function App() {
           />
         ) : view === 'quick-order' ? (
           <QuickOrderView
-            key={`${configured}-${settings?.siteUrl ?? ''}-${conn.state}`}
+            key={viewKey}
             configured={configured}
             conn={conn}
             storeName={storeName}
@@ -164,7 +223,7 @@ export default function App() {
           />
         ) : view === 'products' ? (
           <ProductsView
-            key={`${configured}-${settings?.siteUrl ?? ''}-${conn.state}`}
+            key={viewKey}
             configured={configured}
             conn={conn}
             storeName={storeName}
@@ -172,7 +231,7 @@ export default function App() {
           />
         ) : view === 'warehouses' ? (
           <WarehousesView
-            key={`${configured}-${settings?.siteUrl ?? ''}-${conn.state}`}
+            key={viewKey}
             configured={configured}
             conn={conn}
             storeName={storeName}
@@ -180,7 +239,7 @@ export default function App() {
           />
         ) : view === 'log' ? (
           <ChangeLogView
-            key={`${configured}-${settings?.siteUrl ?? ''}-${conn.state}`}
+            key={viewKey}
             configured={configured}
             conn={conn}
             storeName={storeName}
@@ -188,14 +247,14 @@ export default function App() {
           />
         ) : view === 'reports' ? (
           <ReportsView
-            key={`${configured}-${settings?.siteUrl ?? ''}-${conn.state}`}
+            key={viewKey}
             configured={configured}
             conn={conn}
             storeName={storeName}
             onGoSettings={() => setView('settings')}
           />
         ) : (
-          <SettingsView settings={settings} conn={conn} onSaved={handleSaved} />
+          <SettingsView settings={settings} conn={conn} onSaved={handleSaved} onAccountsChanged={handleAccountsChanged} />
         )}
       </main>
     </div>

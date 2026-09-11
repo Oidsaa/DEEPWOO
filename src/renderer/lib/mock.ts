@@ -1,4 +1,5 @@
 import type {
+  AccountsSnapshot,
   ApiBridge,
   ChangeLogEntry,
   ChangeLogQuery,
@@ -190,6 +191,22 @@ function storedSettings(): Settings {
   } catch {
     return { siteUrl: '', consumerKey: '', consumerSecret: '' }
   }
+}
+
+/** Demo accounts mirror the real bridge: synthesized «main» when empty, else stored list. */
+function mockAccountsSnapshot(): AccountsSnapshot {
+  const s = storedSettings()
+  if (Array.isArray(s.accounts) && s.accounts.length > 0) {
+    return {
+      activeId: s.activeAccountId ?? s.accounts[0].id,
+      accounts: s.accounts,
+    }
+  }
+  if (isDemoSettings(s)) {
+    const main = { id: 'main', label: s.userName?.trim() || 'مدیر فروشگاه', consumerKey: s.consumerKey, consumerSecret: s.consumerSecret }
+    return { activeId: 'main', accounts: [main] }
+  }
+  return { activeId: null, accounts: [] }
 }
 
 /* ------------------------------------------------------------------ */
@@ -732,7 +749,7 @@ function mockOrderNotes(order: Order): OrderNote[] {
   )
   // Some real stores show gateway/status events as admin-flagged notes —
   // deliberately mimicked here so the printable filter can be proven against them.
-  push(0.8, 'WooCommerce', `وضعیت سفارش از «در انتظار پرداخت» به «در حال پردازش» تغییر کرد.`, false, true)
+  push(0.8, 'WooCommerce', `وضعیت سفارش از «در انتظار پرداخت» به «در حال انجام» تغییر کرد.`, false, true)
   if (order.customer_note) {
     push(0.2, order.customer_name ?? 'مشتری', order.customer_note, true, false)
   }
@@ -1067,6 +1084,58 @@ export const mockApi: ApiBridge = {
     }
     return { productId: payload.productId, rows: out }
   },
+  onStockChanged(): () => void {
+    return () => {}
+  },
+  async listAccounts(): Promise<AccountsSnapshot> {
+    await delay(150)
+    return mockAccountsSnapshot()
+  },
+  async addAccount(payload: { label?: string; consumerKey: string; consumerSecret: string }): Promise<AccountsSnapshot> {
+    await delay(300)
+    const s = storedSettings()
+    if (!isDemoSettings(s)) throw new Error(NOT_REAL_MSG)
+    const snapshot = mockAccountsSnapshot()
+    const id = 'demo-' + Math.random().toString(36).slice(2, 8)
+    const next: Settings = {
+      ...s,
+      accounts: [
+        ...snapshot.accounts,
+        {
+          id,
+          label: payload.label?.trim() || `کارشناس ${snapshot.accounts.length + 1}`,
+          consumerKey: payload.consumerKey.trim(),
+          consumerSecret: payload.consumerSecret.trim(),
+        },
+      ],
+      activeAccountId: id,
+    }
+    localStorage.setItem('mock-settings', JSON.stringify(next))
+    return { activeId: id, accounts: next.accounts! }
+  },
+  async removeAccount(id: string): Promise<AccountsSnapshot> {
+    await delay(300)
+    const s = storedSettings()
+    if (!isDemoSettings(s)) throw new Error(NOT_REAL_MSG)
+    const snapshot = mockAccountsSnapshot()
+    const remaining = snapshot.accounts.filter((a) => a.id !== id)
+    if (remaining.length === 0) throw new Error('حداقل یک اکانت باید باقی بماند.')
+    const activeId = snapshot.activeId === id ? remaining[0].id : snapshot.activeId
+    const next: Settings = { ...s, accounts: remaining, activeAccountId: activeId ?? undefined }
+    localStorage.setItem('mock-settings', JSON.stringify(next))
+    return { activeId, accounts: remaining }
+  },
+  async switchAccount(id: string): Promise<{ ok: boolean; userName?: string | null; message?: string }> {
+    await delay(300)
+    const s = storedSettings()
+    if (!isDemoSettings(s)) throw new Error(NOT_REAL_MSG)
+    const snapshot = mockAccountsSnapshot()
+    const acc = snapshot.accounts.find((a) => a.id === id)
+    if (!acc) return { ok: false, message: 'اکانت موردنظر پیدا نشد.' }
+    const next: Settings = { ...s, activeAccountId: id, userName: acc.label }
+    localStorage.setItem('mock-settings', JSON.stringify(next))
+    return { ok: true, userName: acc.label }
+  },
   async getCurrency(): Promise<string> {
     await delay(30)
     return 'تومان'
@@ -1232,8 +1301,8 @@ export const mockApi: ApiBridge = {
   },
   async createCustomer(payload: CustomerPayload) {
     await delay(700)
-    const email = (payload.email ?? '').trim()
     const username = (payload.username ?? '').trim()
+    const email = (payload.email ?? '').trim() || (username ? `${username}@no-reply.invalid` : '')
     const lower = (s: string) => s.toLowerCase()
     if (email && ALL.some((c) => lower(c.email) === lower(email))) {
       throw new Error('مشتری با این ایمیل قبلاً ثبت شده است.')
@@ -1323,6 +1392,7 @@ export const mockApi: ApiBridge = {
         phone: bill.phone ?? customer?.billing.phone,
       },
       ...(payload.shipping ? { shipping: payload.shipping } : {}),
+      ...(payload.coupon_lines?.length ? { coupon_lines: payload.coupon_lines } : {}),
     }
     existing.unshift(order)
     ordersCache = existing

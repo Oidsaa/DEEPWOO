@@ -9,7 +9,7 @@ const decFmt = new Intl.NumberFormat('fa-IR', { maximumFractionDigits: 2 })
  */
 export const ORDER_STATUS_META: Record<string, { fa: string; cls: string }> = {
   completed: { fa: 'تکمیل‌شده', cls: 'pill-green' },
-  processing: { fa: 'در حال پردازش', cls: 'pill-teal' },
+  processing: { fa: 'در حال انجام', cls: 'pill-teal' },
   'pending-payment': { fa: 'در انتظار پرداخت', cls: 'pill-amber' },
   pending: { fa: 'در انتظار پرداخت', cls: 'pill-amber' },
   'on-hold': { fa: 'در انتظار بررسی', cls: 'pill-indigo' },
@@ -22,6 +22,7 @@ export const ORDER_STATUS_META: Record<string, { fa: string; cls: string }> = {
   draft: { fa: 'پیش‌نویس', cls: 'pill-dim' },
   // Custom statuses seen on Iranian WooCommerce stores.
   'sale-hazouri': { fa: 'فروش حضوری', cls: 'pill-green' },
+  anbarfabric: { fa: 'انبارداری', cls: 'pill-amber' },
   foroshgah: { fa: 'تایید فروشگاه', cls: 'pill-teal' },
   kargah: { fa: 'تایید کارگاه', cls: 'pill-indigo' },
   'courier-delivery': { fa: 'تحویل پیک', cls: 'pill-amber' },

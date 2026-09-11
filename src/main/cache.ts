@@ -258,6 +258,18 @@ export function bumpCacheVersion(): void {
 }
 
 /**
+ * Drop ONE cache entry (and its sync cursor) — for snapshots a write made
+ * genuinely wrong (e.g. the warehouses overview after a stock change) while
+ * the rest of the cache stays fresh. The next read of this key fetches for real.
+ */
+export function dropCacheKey(key: string): void {
+  if (!STORE.has(key) && !syncMarks.has(key)) return
+  STORE.delete(key)
+  syncMarks.delete(key)
+  scheduleSave()
+}
+
+/**
  * Load the on-disk snapshot (call once at startup, before IPC handlers run).
  * Missing or corrupt files start the app with an empty cache.
  *

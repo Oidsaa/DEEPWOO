@@ -1,7 +1,7 @@
 import { app } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
-import type { Settings } from '../shared/types'
+import type { Settings, StaffAccount } from '../shared/types'
 import { sanitizeWarehouses } from '../shared/warehouses'
 
 const EMPTY: Settings = { siteUrl: '', consumerKey: '', consumerSecret: '' }
@@ -20,14 +20,38 @@ function file(): string {
   return path.join(app.getPath('userData'), 'settings.json')
 }
 
+function parseAccounts(data: Record<string, unknown>, ck: string, cs: string): StaffAccount[] | undefined {
+  const raw = Array.isArray(data.accounts) ? data.accounts : []
+  const list: StaffAccount[] = []
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue
+    const a = item as Record<string, unknown>
+    if (typeof a.id !== 'string' || !a.id.trim()) continue
+    if (typeof a.consumerKey !== 'string' || typeof a.consumerSecret !== 'string') continue
+    list.push({
+      id: a.id.trim(),
+      label: typeof a.label === 'string' && a.label.trim() ? a.label.trim() : 'کارشناس',
+      consumerKey: a.consumerKey,
+      consumerSecret: a.consumerSecret,
+    })
+  }
+  // Legacy migration: keys saved before accounts existed become the «main» account.
+  if (list.length === 0 && ck && cs) {
+    return [{ id: 'main', label: 'کارشناس اصلی', consumerKey: ck, consumerSecret: cs }]
+  }
+  return list.length > 0 ? list : undefined
+}
+
 export function getSettings(): Settings {
   try {
     const raw = fs.readFileSync(file(), 'utf8')
     const data = JSON.parse(raw)
+    const ck = typeof data.consumerKey === 'string' ? data.consumerKey : ''
+    const cs = typeof data.consumerSecret === 'string' ? data.consumerSecret : ''
     return {
       siteUrl: typeof data.siteUrl === 'string' ? data.siteUrl : '',
-      consumerKey: typeof data.consumerKey === 'string' ? data.consumerKey : '',
-      consumerSecret: typeof data.consumerSecret === 'string' ? data.consumerSecret : '',
+      consumerKey: ck,
+      consumerSecret: cs,
       storeName: typeof data.storeName === 'string' ? data.storeName : undefined,
       storeAddress: typeof data.storeAddress === 'string' ? data.storeAddress : undefined,
       storePostcode: typeof data.storePostcode === 'string' ? data.storePostcode : undefined,
@@ -39,6 +63,11 @@ export function getSettings(): Settings {
           ? data.accentColor.trim().toLowerCase()
           : undefined,
       userName: typeof data.userName === 'string' && data.userName.trim() ? data.userName.trim() : undefined,
+      accounts: parseAccounts(data, ck, cs),
+      activeAccountId:
+        typeof data.activeAccountId === 'string' && data.activeAccountId.trim()
+          ? data.activeAccountId.trim()
+          : undefined,
       noteExclusions: Array.isArray(data.noteExclusions)
         ? (data.noteExclusions as unknown[]).filter((x): x is string => typeof x === 'string')
         : undefined,
@@ -80,10 +109,27 @@ export function clearSettings(): void {
 
 /** Normalize and trim user input for a site URL. */
 export function sanitizeSettings(input: Settings): Settings {
+  const ck = input.consumerKey.trim()
+  const cs = input.consumerSecret.trim()
+  // Accounts from the form pass through; the connection form edits the ACTIVE
+  // account's keys, so the top-level keys always sync into that entry.
+  const rawAccounts = (input.accounts ?? []).filter((a) => a && a.id && a.consumerKey && a.consumerSecret)
+  const accounts: StaffAccount[] | undefined =
+    rawAccounts.length > 0
+      ? rawAccounts
+      : ck && cs
+        ? [{ id: 'main', label: 'کارشناس اصلی', consumerKey: ck, consumerSecret: cs }]
+        : undefined
+  let activeAccountId = input.activeAccountId?.trim() || undefined
+  if (accounts) {
+    if (!activeAccountId || !accounts.some((a) => a.id === activeAccountId)) activeAccountId = accounts[0].id
+    const idx = accounts.findIndex((a) => a.id === activeAccountId)
+    if (idx >= 0 && (ck || cs)) accounts[idx] = { ...accounts[idx], consumerKey: ck, consumerSecret: cs }
+  }
   return {
     siteUrl: normalizeSiteUrl(input.siteUrl),
-    consumerKey: input.consumerKey.trim(),
-    consumerSecret: input.consumerSecret.trim(),
+    consumerKey: ck,
+    consumerSecret: cs,
     storeName: (input.storeName ?? '').trim() || undefined,
     storeAddress: (input.storeAddress ?? '').trim() || undefined,
     storePostcode: (input.storePostcode ?? '').trim() || undefined,
@@ -95,6 +141,8 @@ export function sanitizeSettings(input: Settings): Settings {
         ? input.accentColor.trim().toLowerCase()
         : undefined,
     userName: (input.userName ?? '').trim() || undefined,
+    accounts,
+    activeAccountId,
     // One phrase per line from the settings textarea: trimmed, non-empty, deduped.
     noteExclusions: [...new Set((input.noteExclusions ?? []).map((p) => p.trim()).filter(Boolean))],
     // Cost of goods per product id (تومان): keep only positive finite numbers.
