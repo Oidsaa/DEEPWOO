@@ -21,6 +21,7 @@ const api: ApiBridge = {
   listCustomers: (query: ListCustomersQuery) => ipcRenderer.invoke('wc:customers', query),
   createCustomer: (payload: CustomerPayload) => ipcRenderer.invoke('wc:create-customer', payload),
   createOrder: (payload) => ipcRenderer.invoke('wc:order-create', payload),
+  findCoupon: (code: string) => ipcRenderer.invoke('wc:coupon-get', code),
   clearCache: () => ipcRenderer.invoke('cache:clear'),
   getCacheStatus: () => ipcRenderer.invoke('cache:status'),
   getReports: (query) => ipcRenderer.invoke('wc:reports', query),

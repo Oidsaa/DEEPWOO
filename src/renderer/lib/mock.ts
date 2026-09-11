@@ -5,6 +5,7 @@ import type {
   ChangeLogQuery,
   ChangeLogResult,
   ConnectionResult,
+  Coupon,
   Customer,
   CustomerPayload,
   CustomersResult,
@@ -763,6 +764,22 @@ function mockOrderNotes(order: Order): OrderNote[] {
 /** Notes added through the app during this session (prepended to the generated ones). */
 const userOrderNotes = new Map<number, OrderNote[]>()
 
+/** Demo coupons for the quick-order «اعمال کد تخفیف» flow. */
+const MOCK_COUPONS: Coupon[] = [
+  { id: 9001, code: 'WELCOME10', amount: '10', discount_type: 'percent' },
+  { id: 9002, code: 'OFF50', amount: '50000', discount_type: 'fixed_cart' },
+  { id: 9003, code: 'PERITEM', amount: '20000', discount_type: 'fixed_product' },
+]
+
+/** Mirrors the quick-order estimate: discount capped at the items total. */
+function mockCouponDiscount(code: string, items: number, count: number): number {
+  const c = MOCK_COUPONS.find((x) => x.code.toLowerCase() === code.trim().toLowerCase())
+  if (!c) return 0
+  const a = Number(c.amount) || 0
+  const d = c.discount_type === 'percent' ? (items * a) / 100 : c.discount_type === 'fixed_product' ? a * count : a
+  return Math.min(Math.round(d * 100) / 100, items)
+}
+
 const MOCK_LOG: ChangeLogEntry[] = [
   { ts: Date.now() - 8 * 60_000, user: 'انباردار فروشگاه', section: 'warehouses', action: 'save', title: 'ثبت موجودی انبار — محصول #1284', details: '۳ ترکیب • همگام با سایت' },
   { ts: Date.now() - 26 * 60_000, user: 'مدیر فروشگاه', section: 'orders', action: 'order-create', title: 'ثبت سفارش سریع #10433', details: 'سارا محمدی • 1240000 تومان', target: '#10433', amount: 1240000 },
@@ -1366,6 +1383,10 @@ export const mockApi: ApiBridge = {
       }
     })
     const sum = lines.reduce((a, x) => a + (Number(x.total) || 0), 0)
+    const shipTotal = Math.round((Number(payload.shipping_lines?.[0]?.total) || 0) * 100) / 100
+    const discTotal = payload.coupon_lines?.[0]?.code
+      ? mockCouponDiscount(payload.coupon_lines[0].code, sum, lines.reduce((a, x) => a + x.quantity, 0))
+      : 0
     const existing = allOrders()
     const customer = payload.customer_id ? ALL.find((c) => c.id === payload.customer_id) : undefined
     const bill = payload.billing ?? {}
@@ -1376,7 +1397,7 @@ export const mockApi: ApiBridge = {
       status: payload.status ?? 'processing',
       date_created: now,
       date_modified: now,
-      total: String(Math.round(sum * 100) / 100),
+      total: String(Math.round(Math.max(0, sum + shipTotal - discTotal) * 100) / 100),
       currency: '',
       payment_method_title: (payload.payment_method_title ?? '').trim(),
       customer_id: payload.customer_id ?? 0,
@@ -1392,11 +1413,19 @@ export const mockApi: ApiBridge = {
         phone: bill.phone ?? customer?.billing.phone,
       },
       ...(payload.shipping ? { shipping: payload.shipping } : {}),
+      ...(payload.shipping_lines?.length ? { shipping_lines: payload.shipping_lines } : {}),
       ...(payload.coupon_lines?.length ? { coupon_lines: payload.coupon_lines } : {}),
     }
     existing.unshift(order)
     ordersCache = existing
     return order
+  },
+  async findCoupon(code: string): Promise<Coupon | null> {
+    await delay(350)
+    if (!isDemoSettings(storedSettings())) throw new Error(NOT_REAL_MSG)
+    const clean = (code ?? '').trim().toLowerCase()
+    const hit = MOCK_COUPONS.find((c) => c.code.toLowerCase() === clean)
+    return hit ?? null
   },
   async getReports(query: ReportsQuery): Promise<SalesReport> {
     await delay(700)

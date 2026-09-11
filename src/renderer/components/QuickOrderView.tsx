@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { ConnState, Customer, Order, Product, ProductVariation } from '../../shared/types'
+import type { ConnState, Coupon, Customer, Order, Product, ProductVariation } from '../../shared/types'
 import { IR_PROVINCES } from '../../shared/iran'
 import { api, isMock } from '../api'
 import { normalizePhone } from '../../shared/phone'
@@ -82,6 +82,11 @@ export default function QuickOrderView({ configured, conn, storeName, onGoSettin
   const [addr, setAddr] = useState({ state: '', city: '', address1: '', address2: '', postcode: '' })
   const [pay, setPay] = useState<PayMode>('cash')
   const [coupon, setCoupon] = useState('')
+  const [shipInput, setShipInput] = useState('')
+  const [shipApplied, setShipApplied] = useState<number | null>(null)
+  const [couponApplied, setCouponApplied] = useState<Coupon | null>(null)
+  const [couponBusy, setCouponBusy] = useState(false)
+  const [couponMsg, setCouponMsg] = useState<string | null>(null)
 
   /* ------------------------------- submit ------------------------------- */
   const [submitting, setSubmitting] = useState(false)
@@ -201,6 +206,46 @@ export default function QuickOrderView({ configured, conn, storeName, onGoSettin
   const lineCount = lines.reduce((a, l) => a + l.qty, 0)
   const total = Math.round(lines.reduce((a, l) => a + unitPrice(l.product, l.variation) * l.qty, 0) * 100) / 100
 
+  /* ---------------------- shipping cost / coupon apply ------------------ */
+  /** Local estimate of a coupon's discount — WooCommerce does the final math. */
+  const couponDiscount = (c: Coupon, items: number, count: number): number => {
+    const a = Number(c.amount) || 0
+    const d = c.discount_type === 'percent' ? (items * a) / 100 : c.discount_type === 'fixed_product' ? a * count : a
+    return Math.min(Math.round(d * 100) / 100, items)
+  }
+
+  const shipAmount = delivery === 'shipped' && shipApplied ? shipApplied : 0
+  const discountAmount = couponApplied ? couponDiscount(couponApplied, total, lineCount) : 0
+  const grandTotal = Math.max(0, Math.round((total - discountAmount + shipAmount) * 100) / 100)
+
+  const applyShip = () => {
+    const n = Math.round((Number(shipInput.replace(/[^\d.]/g, '')) || 0) * 100) / 100
+    setShipApplied(n > 0 ? n : null)
+  }
+
+  const applyCoupon = async () => {
+    const code = coupon.trim()
+    if (!code || couponBusy) return
+    setCouponBusy(true)
+    setCouponMsg(null)
+    try {
+      const c = await api.findCoupon(code)
+      setCouponApplied(c)
+      if (!c) setCouponMsg(`کد تخفیف «${code}» در فروشگاه پیدا نشد.`)
+    } catch (e) {
+      setCouponApplied(null)
+      setCouponMsg(e instanceof Error ? e.message : String(e))
+    } finally {
+      setCouponBusy(false)
+    }
+  }
+
+  const clearCoupon = () => {
+    setCoupon('')
+    setCouponApplied(null)
+    setCouponMsg(null)
+  }
+
   /* ----------------------------- customer pick -------------------------- */
   const pickCustomer = (c: Customer) => {
     setSelectedCust(c)
@@ -244,6 +289,10 @@ export default function QuickOrderView({ configured, conn, storeName, onGoSettin
     setAddr({ state: '', city: '', address1: '', address2: '', postcode: '' })
     setPay('cash')
     setCoupon('')
+    setCouponApplied(null)
+    setCouponMsg(null)
+    setShipInput('')
+    setShipApplied(null)
     setError(null)
     setCreated(null)
     setReceiptOrder(null)
@@ -283,12 +332,29 @@ export default function QuickOrderView({ configured, conn, storeName, onGoSettin
         // مشتری جدید — نام‌کاربری همان شمارهٔ موبایل است (بدون ایمیل قابل ساخت است).
         const first = newName.first.trim()
         const last = newName.last.trim()
-        customer = await api.createCustomer({
-          first_name: first,
-          last_name: last,
-          username: normPhone,
-          billing: { first_name: first, last_name: last, phone: normPhone },
-        })
+        try {
+          customer = await api.createCustomer({
+            first_name: first,
+            last_name: last,
+            username: normPhone,
+            billing: { first_name: first, last_name: last, phone: normPhone },
+          })
+        } catch (err) {
+          // تلاش قبلی ممکن است مشتری را ساخته و وسط راه خطا داده باشد —
+          // در این حالت همان حساب موجود از سایت بازیابی می‌شود.
+          const msg = err instanceof Error ? err.message : String(err)
+          if (/قبلا|ثبت شده|already|exist/i.test(msg)) {
+            const r = await api.listCustomers({ phone: normPhone })
+            if (!r.customers.length) throw err
+            customer = r.customers[0]
+          } else {
+            throw err
+          }
+        }
+        // همین‌جا انتخاب شود تا تلاش مجددِ ثبت سفارش، مشتری تکراری نسازد.
+        setSelectedCust(customer)
+        setCustMatches(null)
+        setShowNewForm(false)
       }
 
       const bPhone = customer.billing?.phone?.trim() || normPhone
@@ -311,6 +377,7 @@ export default function QuickOrderView({ configured, conn, storeName, onGoSettin
       // نقدی و کارت‌به‌کارت در محل تسویه می‌شوند؛ اقساطی اسنپ‌پی بدون تسویهٔ کامل ثبت می‌شود.
       const inPerson = delivery === 'inperson'
       const code = coupon.trim()
+      const shipCost = shipApplied ?? 0
       const order = await api.createOrder({
         customer_id: customer.id,
         payment_method: pay === 'cash' ? 'pos-cash' : pay === 'card' ? 'pos-card' : 'snappay-installment',
@@ -321,14 +388,20 @@ export default function QuickOrderView({ configured, conn, storeName, onGoSettin
         ...(billed ? { shipping: { first_name: customer.first_name, last_name: customer.last_name, ...addrBlock } } : {}),
         line_items: lineItems,
         ...(code ? { coupon_lines: [{ code }] } : {}),
+        ...(billed && shipCost > 0
+          ? { shipping_lines: [{ method_id: 'flat_rate', method_title: 'هزینهٔ ارسال', total: String(shipCost) }] }
+          : {}),
       })
-      setSelectedCust(customer)
       setCreated(order)
       setCustMatches(null)
       setLines([])
       setProdQuery('')
       setPicking(null)
       setCoupon('')
+      setCouponApplied(null)
+      setCouponMsg(null)
+      setShipInput('')
+      setShipApplied(null)
       // سفارش ثبت شد — برای تحویلِ رسید به مشتری (مخصوصاً حضوری)، پیش‌نمایش رسید فروشگاه باز می‌شود.
       setReceiptOrder(order)
     } catch (e) {
@@ -731,7 +804,10 @@ export default function QuickOrderView({ configured, conn, storeName, onGoSettin
               <button
                 type="button"
                 className={'qo-seg-btn' + (delivery === 'inperson' ? ' active' : '')}
-                onClick={() => setDelivery('inperson')}
+                onClick={() => {
+                  setDelivery('inperson')
+                  setShipApplied(null)
+                }}
               >
                 <IconStore size={17} />
                 <span>
@@ -827,6 +903,32 @@ export default function QuickOrderView({ configured, conn, storeName, onGoSettin
                     />
                   </div>
                 </div>
+
+                <div className="field" style={{ marginTop: 12 }}>
+                  <label className="lbl" htmlFor="qo-shipcost">
+                    هزینهٔ ارسال <span className="f-hint-inline">(اختیاری)</span>
+                  </label>
+                  <div className="qo-apply-row">
+                    <input
+                      id="qo-shipcost"
+                      className="input ltr"
+                      dir="ltr"
+                      inputMode="decimal"
+                      autoComplete="off"
+                      value={shipInput}
+                      onChange={(e) => setShipInput(e.target.value)}
+                      placeholder="0"
+                    />
+                    <button type="button" className="btn btn-soft" onClick={applyShip} disabled={!shipInput.trim()}>
+                      <IconCheck size={14} /> اعمال
+                    </button>
+                  </div>
+                  <div className="f-hint">
+                    {shipApplied !== null
+                      ? `اعمال شد — ${faNum(shipApplied)} ${cur} به مبلغ نهایی اضافه می‌شود.`
+                      : 'مبلغ را وارد کنید و «اعمال» را بزنید تا در مبلغ نهایی دیده شود.'}
+                  </div>
+                </div>
               </div>
             )}
           </div>
@@ -868,16 +970,41 @@ export default function QuickOrderView({ configured, conn, storeName, onGoSettin
               <label className="lbl" htmlFor="qo-coupon">
                 کد تخفیف <span className="f-hint-inline">(اختیاری)</span>
               </label>
-              <input
-                id="qo-coupon"
-                className="input ltr"
-                dir="ltr"
-                autoComplete="off"
-                value={coupon}
-                onChange={(e) => setCoupon(e.target.value)}
-                placeholder="WELCOME10"
-              />
-              <div className="f-hint">در صورت معتبر بودن، تخفیف هنگام ثبت در فروشگاه روی سفارش اعمال می‌شود.</div>
+              <div className="qo-apply-row">
+                <input
+                  id="qo-coupon"
+                  className="input ltr"
+                  dir="ltr"
+                  autoComplete="off"
+                  value={coupon}
+                  onChange={(e) => {
+                    const v = e.target.value
+                    setCoupon(v)
+                    if (couponApplied && v.trim().toLowerCase() !== couponApplied.code.toLowerCase()) {
+                      setCouponApplied(null)
+                      setCouponMsg(null)
+                    }
+                  }}
+                  placeholder="WELCOME10"
+                  disabled={couponBusy}
+                />
+                {couponApplied ? (
+                  <button type="button" className="btn btn-ghost" onClick={clearCoupon} disabled={couponBusy}>
+                    <IconX size={14} /> حذف
+                  </button>
+                ) : (
+                  <button type="button" className="btn btn-soft" onClick={applyCoupon} disabled={couponBusy || !coupon.trim()}>
+                    {couponBusy ? <IconRefresh size={14} className="spin" /> : <IconCheck size={14} />}
+                    {couponBusy ? 'بررسی…' : 'اعمال'}
+                  </button>
+                )}
+              </div>
+              <div className="f-hint">
+                {couponApplied
+                  ? `اعمال شد — تخفیف حدود ${faNum(discountAmount)} ${cur} از مبلغ نهایی کسر می‌شود.`
+                  : 'کد را وارد و اعمال کنید تا تخفیف در مبلغ نهایی دیده شود.'}
+              </div>
+              {couponMsg && <div className="f-hint qo-coupon-err">{couponMsg}</div>}
             </div>
           </div>
         </section>
@@ -889,8 +1016,18 @@ export default function QuickOrderView({ configured, conn, storeName, onGoSettin
           <span>
             <b>{faNum(lineCount)}</b> عدد کالا
           </span>
+          {shipAmount > 0 && (
+            <span>
+              هزینهٔ ارسال: <b>{faNum(shipAmount)}</b> {cur}
+            </span>
+          )}
+          {discountAmount > 0 && (
+            <span>
+              تخفیف: <b className="od-discount">−{faNum(discountAmount)}</b> {cur}
+            </span>
+          )}
           <span>
-            جمع کل: <b className="qo-sum-total">{faNum(total)}</b> {cur}
+            مبلغ نهایی: <b className="qo-sum-total">{faNum(grandTotal)}</b> {cur}
           </span>
           <span
             className={"pill " + (delivery === 'inperson' ? 'pill-green' : 'pill-teal')}

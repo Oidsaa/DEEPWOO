@@ -401,6 +401,8 @@ export interface OrderPayload {
   }>
   /** Coupon codes to apply at the store (WooCommerce validates them itself). */
   coupon_lines?: Array<{ code: string }>
+  /** Extra shipping line (هزینهٔ ارسال سفارش‌های ارسالی ثبت‌شده در برنامه). */
+  shipping_lines?: Array<{ method_id?: string; method_title?: string; total?: string }>
 }
 
 /** Payload for updating an existing order's line items and addresses.
@@ -463,10 +465,20 @@ export interface OrderNote {
 export interface OrderNotePayload {
   note: string
   customer_note?: boolean
+  /** true → attribute the note to the API key owner instead of the system. */
+  added_by_user?: boolean
 }
 
 /** Kinds of printable order receipts. */
 export type ReceiptType = 'postal' | 'warehouse' | 'store'
+
+/** Store coupon, narrowed to what the quick-order screen needs. */
+export interface Coupon {
+  id: number
+  code: string
+  amount: string
+  discount_type: string
+}
 
 /** Document handed to the main process for printing (its own full HTML doc). */
 export interface PrintReceiptDoc {
@@ -656,6 +668,8 @@ export interface ApiBridge {
   createCustomer(payload: CustomerPayload): Promise<Customer>
   /** Create an order (quick registration). Requires a Read/Write API key. */
   createOrder(payload: OrderPayload): Promise<Order>
+  /** Look up a store coupon by its exact code (null when unknown). */
+  findCoupon(code: string): Promise<Coupon | null>
   /**
    * Drop every cached store response (desktop cache + demo rebuild). Called by
    * the «به‌روزرسانی» / «بارگذاری مجدد» buttons so the next read refetches

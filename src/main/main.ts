@@ -24,6 +24,7 @@ import {
   listCustomers,
   createCustomer,
   createOrder,
+  findCoupon,
   getSalesReports,
   listCustomerOrders,
   listOrders,
@@ -551,6 +552,23 @@ function registerIpc(): void {
         }
       }
       return result
+    } catch (err) {
+      throw new Error(err instanceof Error ? err.message : String(err))
+    }
+  })
+
+  ipcMain.handle('wc:coupon-get', async (_event, code: string) => {
+    const cfg = getSettings()
+    if (!cfg.siteUrl || !cfg.consumerKey || !cfg.consumerSecret) {
+      throw new Error('تنظیمات API کامل نشده است.')
+    }
+    try {
+      const clean = String(code ?? '').trim()
+      if (!clean) return null
+      // Cached (negative results included) — re-applying a code on a slow
+      // store must not wait another full round-trip. Apps never write
+      // coupons, so a short detail TTL + write-invalidation is enough.
+      return await cachedRun(ck('coupon', clean.toLowerCase()), cacheTtlMs(cfg, 'detail'), () => findCoupon(cfg, clean))
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
     }

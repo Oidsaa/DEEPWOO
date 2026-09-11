@@ -3,6 +3,7 @@ import type {
   ChangeLogQuery,
   ChangeLogResult,
   ChangeLogSection,
+  Coupon,
   Customer,
   CustomerPayload,
   CustomersResult,
@@ -98,8 +99,16 @@ function signAndBuildUrl(
 }
 
 function friendlyError(status: number | null, body: any, raw: unknown): Error {
-  // Persian-friendly messages for the most common failure modes.
+  // Fetch-level failure: timeout vs. unreachable host get distinct messages,
+  // because a timed-out write may still have been committed by the store.
   if (raw instanceof TypeError || (raw as any)?.cause?.code === 'ECONNREFUSED' || status === null) {
+    const name = (raw as { name?: string } | null)?.name
+    if (name === 'TimeoutError' || name === 'AbortError' || (raw as { code?: string })?.code === 'ABORT_ERR') {
+      return new Error(
+        'فروشگاه دیر پاسخ داد و درخواست قطع شد (Timeout). ممکن است عملیات با تأخیر در سایت انجام شده باشد — ' +
+          'پیش از تلاش مجدد، فهرست مربوطه را به‌روزرسانی کنید تا از تکراری‌نشدن مطمئن شوید.',
+      )
+    }
     return new Error('ارتباط با فروشگاه برقرار نشد. آدرس سایت و اتصال اینترنت را بررسی کنید.')
   }
   if (status === 401) {
@@ -127,8 +136,12 @@ export async function wooRequest<T>(
   params: Record<string, string | number> = {},
   payload?: unknown,
   version: ApiVersion = 'v3',
-  timeoutMs = 20000,
+  timeoutMs = 0,
 ): Promise<{ data: T; headers: Headers }> {
+  // Writes (stock + emails + webhooks on the store side) are not safely
+  // retryable and regularly exceed 20s on slow hosts — give them 60s unless
+  // the caller overrides. Reads stay at 20s (cached + safe to retry).
+  const timeout = timeoutMs > 0 ? timeoutMs : method.toUpperCase() === 'GET' ? 20000 : 60000
   let res: Response
   try {
     const url = signAndBuildUrl(cfg, method, path, params, version)
@@ -139,7 +152,7 @@ export async function wooRequest<T>(
         ...(payload !== undefined ? { 'Content-Type': 'application/json' } : {}),
       },
       body: payload !== undefined ? JSON.stringify(payload) : undefined,
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: AbortSignal.timeout(timeout),
       redirect: 'follow',
     })
   } catch (err) {
@@ -659,8 +672,18 @@ export async function createCustomer(cfg: WooConfig, payload: CustomerPayload): 
 
 /** Create an order (POST /orders). Requires a Read/Write API key. */
 export async function createOrder(cfg: WooConfig, payload: OrderPayload): Promise<Order> {
-  const { data } = await wooRequest<Order>(cfg, 'POST', '/orders', {}, payload)
+  // Order creation is the heaviest store write (stock + emails + coupons);
+  // slow hosts regularly exceed the default 20s, so give it 90s.
+  const { data } = await wooRequest<Order>(cfg, 'POST', '/orders', {}, payload, 'v3', 90000)
   return data
+}
+
+/** Look up a store coupon by its exact code (GET /coupons?code=...). */
+export async function findCoupon(cfg: WooConfig, code: string): Promise<Coupon | null> {
+  const clean = String(code ?? '').trim()
+  if (!clean) return null
+  const { data } = await wooRequest<Coupon[]>(cfg, 'GET', '/coupons', { code: clean, per_page: 10 })
+  return (data ?? [])[0] ?? null
 }
 
 /* ------------------------------------------------------------------ */
@@ -1120,13 +1143,18 @@ export async function listOrderNotes(cfg: WooConfig, orderId: number): Promise<O
   return data
 }
 
-/** Add a note to an order (POST /orders/{id}/notes). Requires a Read/Write key. */
+/** Add a note to an order (POST /orders/{id}/notes). Requires a Read/Write key.
+ * added_by_user:true attributes the note to the API key owner (WooCommerce REST
+ * defaults to "WooCommerce"/system, which hides the staff name next to the date). */
 export async function createOrderNote(
   cfg: WooConfig,
   orderId: number,
   payload: OrderNotePayload,
 ): Promise<OrderNote> {
-  const { data } = await wooRequest<OrderNote>(cfg, 'POST', `/orders/${orderId}/notes`, {}, payload)
+  const { data } = await wooRequest<OrderNote>(cfg, 'POST', `/orders/${orderId}/notes`, {}, {
+    ...payload,
+    added_by_user: true,
+  })
   return data
 }
 

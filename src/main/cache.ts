@@ -70,7 +70,8 @@ const MAX_ENTRIES = 500
 let version = 0
 let filePath: string | null = null
 let saveTimer: ReturnType<typeof setTimeout> | null = null
-const inflight = new Map<string, Promise<void>>()
+/** Loader runs per key, shared by concurrent readers (cold miss + SWR refresh). */
+const inflight = new Map<string, Promise<unknown>>()
 const lastRefresh = new Map<string, number>()
 
 /** Usage counters + real store-sync stamps per endpoint prefix (UI «آخرین همگام‌سازی»). */
@@ -157,15 +158,37 @@ export function cachedRun<T>(key: string, ttlMs: number, loader: (prev?: T) => P
     void refreshInBackground(key, ttlMs, loader)
     return Promise.resolve(hit.value as T)
   }
+  return loadAndStore(key, ttlMs, loader) as Promise<T>
+}
+
+/**
+ * Run the loader ONCE per key and store the result. Concurrent readers of the
+ * same key (cold miss, or a read racing a background revalidation) join the
+ * running promise instead of duplicating the request — on a slow store this
+ * halves visible latency and avoids hammering WooCommerce.
+ */
+function loadAndStore<T>(key: string, ttlMs: number, loader: (prev?: T) => Promise<T>): Promise<T> {
+  const running = inflight.get(key)
+  if (running) {
+    hits += 1
+    return running as Promise<T>
+  }
   misses += 1
-  return loader(hit?.value as T | undefined).then((value) => {
-    fetches += 1
-    syncedAt.set(prefixOf(key), Date.now())
-    STORE.set(key, { value, expiresAt: Date.now() + ttlMs, staleUntil: 0, version, at: Date.now() })
-    if (STORE.size > MAX_ENTRIES) evictOldest()
-    scheduleSave()
-    return value
-  })
+  const p = loader(STORE.get(key)?.value as T | undefined)
+    .then((value) => {
+      fetches += 1
+      syncedAt.set(prefixOf(key), Date.now())
+      STORE.set(key, { value, expiresAt: Date.now() + ttlMs, staleUntil: 0, version, at: Date.now() })
+      if (STORE.size > MAX_ENTRIES) evictOldest()
+      scheduleSave()
+      return value
+    })
+    .finally(() => {
+      inflight.delete(key)
+      lastRefresh.set(key, Date.now())
+    })
+  inflight.set(key, p)
+  return p
 }
 
 /**
@@ -214,24 +237,10 @@ export function patchCacheKeepFresh<T>(key: string, updater: (value: T) => T): b
 
 function refreshInBackground<T>(key: string, ttlMs: number, loader: (prev?: T) => Promise<T>): void {
   const now = Date.now()
-  if (now - (lastRefresh.get(key) ?? 0) < REFRESH_MIN_GAP_MS || inflight.has(key)) return
-  inflight.set(
-    key,
-    loader(STORE.get(key)?.value as T | undefined)
-      .then((value) => {
-        fetches += 1
-        syncedAt.set(prefixOf(key), Date.now())
-        STORE.set(key, { value, expiresAt: Date.now() + ttlMs, staleUntil: 0, version, at: Date.now() })
-        scheduleSave()
-      })
-      .catch(() => {
-        /* network hiccup on cold start — keep the stale copy, retry later */
-      })
-      .finally(() => {
-        inflight.delete(key)
-        lastRefresh.set(key, Date.now())
-      }),
-  )
+  if (now - (lastRefresh.get(key) ?? 0) < REFRESH_MIN_GAP_MS) return
+  void loadAndStore(key, ttlMs, loader).catch(() => {
+    /* network hiccup on cold start — keep the stale copy, retry later */
+  })
 }
 
 /** Drop every cached entry immediately (manual «به‌روزرسانی» / force resync). */

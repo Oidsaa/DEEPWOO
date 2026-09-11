@@ -69,22 +69,6 @@ function Kpi({ icon, tone, label, value, hint }: { icon: ReactNode; tone: string
   )
 }
 
-function BarRow({ label, value, pct, cls, note }: { label: string; value: string; pct: number; cls: string; note?: string }) {
-  return (
-    <div className="rp-row" style={{ gap: 6 }}>
-      <div className="rp-row-head" style={{ marginBottom: 2 }}>
-        <span className="rp-row-name">{label}</span>
-        <span className="rp-row-val num">
-          {value} {note}
-        </span>
-      </div>
-      <div className="rp-bar-track slim">
-        <div className={'rp-bar ' + cls} style={{ width: Math.min(100, Math.max(1, pct)) + '%' }} />
-      </div>
-    </div>
-  )
-}
-
 function MiniBar({ v, max, cls }: { v: number; max: number; cls: string }) {
   return (
     <div className="rp-bar-track slim" style={{ margin: '4px 0 0' }}>
@@ -162,56 +146,31 @@ function OverviewTab({ r, maxDay }: { r: SalesReport; maxDay: number }) {
         </div>
       </div>
 
-      <div className="qo-duo">
-        <section className="panel">
-          <div className="panel-head">
-            <div>
-              <div className="panel-title">تحلیل قیف فروش و نرخ تبدیل</div>
-              <div className="panel-sub">مسیر سفارش‌های بازه بر اساس وضعیت آن‌ها</div>
-            </div>
-            <span className="qo-cust-picked">
-              <IconStore size={13} /> {faNum(r.funnel.created)} سفارش ثبت‌شده
-            </span>
+      <section className="panel">
+        <div className="panel-head">
+          <div>
+            <div className="panel-title">خلاصهٔ مدیریتی</div>
+            <div className="panel-sub">نکات کلیدی بازهٔ {faDate(r.from)} تا {faDate(r.to)}</div>
           </div>
-          <div className="rp-body">
-            <BarRow label="ثبت‌شده (همهٔ وضعیت‌ها)" value={faNum(r.funnel.created)} pct={100} cls="soft" note="۱۰۰٪" />
-            <BarRow label="در انتظار پرداخت/معوق" value={faNum(r.funnel.awaiting)} pct={r.funnel.waitingPct ?? 0} cls="soft" note={faNum(r.funnel.waitingPct ?? 0) + '٪'} />
-            <BarRow label="پرداخت‌شده / در جریان" value={faNum(r.funnel.paid)} pct={r.funnel.paidPct ?? 0} cls="" note={faNum(r.funnel.paidPct ?? 0) + '٪'} />
-            <BarRow label="تکمیل‌شده" value={faNum(r.funnel.completed)} pct={r.funnel.completionPct ?? 0} cls="indigo" note={faNum(r.funnel.completionPct ?? 0) + '٪'} />
-            <BarRow label="لغو / بازگشت / ناموفق" value={faNum(r.funnel.lost)} pct={r.funnel.lostPct ?? 0} cls="danger" note={faNum(r.funnel.lostPct ?? 0) + '٪'} />
-          </div>
-          <div className="notice amber" style={{ margin: '0 14px 12px' }}>
-            <IconAlert size={15} />
-            <div>تقریبی: API فروشگاه دادهٔ بازدید سایت را ندارد؛ قیف از روی وضعیت سفارش‌های همین بازه ساخته شده است.</div>
-          </div>
-        </section>
-
-        <section className="panel">
-          <div className="panel-head">
-            <div>
-              <div className="panel-title">خلاصهٔ مدیریتی</div>
-              <div className="panel-sub">نکات کلیدی بازهٔ {faDate(r.from)} تا {faDate(r.to)}</div>
-            </div>
-            <span className="qo-cust-picked">
-              <IconChart size={13} /> {faNum(r.days)} روز
-            </span>
-          </div>
-          <div className="rp-body" style={{ gap: 10 }}>
-            <ExecRow
-              title="بهترین روز فروش"
-              value={best && best.total > 0 ? `${faDate(best.date)} — ${faNum(best.total)} ${cur}` : 'در این بازه فروشی ثبت نشده'}
-              icon={<IconChart size={13} />}
-            />
-            <ExecRow title="نسبت سفارش به مشتری" value={c.orderRatio !== null ? `${faNum(c.orderRatio)} سفارش به ازای هر مشتری فعال` : '—'} icon={<IconBag size={13} />} />
-            <ExecRow title="مشتریان بازه" value={`${faNum(c.active)} فعال (${faNum(c.newCustomers)} جدید · ${faNum(c.returning)} بازگشتی · ${faNum(c.guests)} مهمان)`} icon={<IconUsers size={13} />} />
-            <ExecRow title="خرید تکراری" value={c.repeatRate !== null ? `${faNum(c.repeatRate)}٪ مشتریان بیش از یک بار خرید کرده‌اند` : '—'} icon={<IconLayers size={13} />} />
-            {topPay ? (
-              <ExecRow title="روش پرداخت غالب" value={`${topPay.label} — ${faNum(topPay.count)} سفارش (${faNum(topPay.total)} ${cur})`} icon={<IconWallet size={13} />} />
-            ) : null}
-            <ExecRow title="میانگین فروش روزانه" value={r.days > 0 ? faNum(Math.round(r.totals.revenue / r.days)) + ' ' + cur : '—'} icon={<IconClock size={13} />} />
-          </div>
-        </section>
-      </div>
+          <span className="qo-cust-picked">
+            <IconChart size={13} /> {faNum(r.days)} روز
+          </span>
+        </div>
+        <div className="exec-grid">
+          <ExecRow
+            title="بهترین روز فروش"
+            value={best && best.total > 0 ? `${faDate(best.date)} — ${faNum(best.total)} ${cur}` : 'در این بازه فروشی ثبت نشده'}
+            icon={<IconChart size={13} />}
+          />
+          <ExecRow title="نسبت سفارش به مشتری" value={c.orderRatio !== null ? `${faNum(c.orderRatio)} سفارش به ازای هر مشتری فعال` : '—'} icon={<IconBag size={13} />} />
+          <ExecRow title="مشتریان بازه" value={`${faNum(c.active)} فعال (${faNum(c.newCustomers)} جدید · ${faNum(c.returning)} بازگشتی · ${faNum(c.guests)} مهمان)`} icon={<IconUsers size={13} />} />
+          <ExecRow title="خرید تکراری" value={c.repeatRate !== null ? `${faNum(c.repeatRate)}٪ مشتریان بیش از یک بار خرید کرده‌اند` : '—'} icon={<IconLayers size={13} />} />
+          {topPay ? (
+            <ExecRow title="روش پرداخت غالب" value={`${topPay.label} — ${faNum(topPay.count)} سفارش (${faNum(topPay.total)} ${cur})`} icon={<IconWallet size={13} />} />
+          ) : null}
+          <ExecRow title="میانگین فروش روزانه" value={r.days > 0 ? faNum(Math.round(r.totals.revenue / r.days)) + ' ' + cur : '—'} icon={<IconClock size={13} />} />
+        </div>
+      </section>
 
       {/* فروش روزانه */}
       <section className="panel">
@@ -337,14 +296,12 @@ function OverviewTab({ r, maxDay }: { r: SalesReport; maxDay: number }) {
 
 function ExecRow({ icon, title, value }: { icon: ReactNode; title: string; value: string }) {
   return (
-    <div className="rp-row" style={{ alignItems: 'center' }}>
-      <span className="rp-row-name" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 128 }}>
+    <div className="exec-cell">
+      <div className="exec-title">
         {icon}
-        {title}
-      </span>
-      <span className="rp-row-val num" style={{ fontWeight: 500, color: 'var(--text, #e6edf7)' }}>
-        {value}
-      </span>
+        <span>{title}</span>
+      </div>
+      <div className="exec-value">{value}</div>
     </div>
   )
 }
