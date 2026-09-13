@@ -5,6 +5,7 @@ import { api, isMock } from '../api'
 import { normalizePhone } from '../../shared/phone'
 import { avatarPalette, faDate, faDigits, faNum, orderStatusMeta } from '../lib/format'
 import { useCurrency } from '../lib/currency'
+import { useSyncRefresh } from '../lib/liveSync'
 import ReceiptModal from './ReceiptModal'
 import {
   IconAlert,
@@ -96,6 +97,8 @@ export default function QuickOrderView({ configured, conn, storeName, onGoSettin
 
   const phoneRef = useRef<HTMLInputElement | null>(null)
   const prodInputRef = useRef<HTMLInputElement | null>(null)
+  /** Retries lookups when a background sync lands data (first-run misses). */
+  const syncBump = useSyncRefresh()
 
   const normPhone = normalizePhone(phone)
   const phoneReady = normPhone.length >= 10
@@ -134,7 +137,7 @@ export default function QuickOrderView({ configured, conn, storeName, onGoSettin
       window.clearTimeout(t)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phone, phoneReady, configured])
+  }, [phone, phoneReady, configured, syncBump])
 
   /* Debounced product search. */
   useEffect(() => {

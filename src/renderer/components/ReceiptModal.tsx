@@ -1,9 +1,10 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { Order, OrderNote, ReceiptType } from '../../shared/types'
 import { api, isMock } from '../api'
 import { faDate, faDigits, faNum, faTime } from '../lib/format'
 import { buildReceiptDoc, RECEIPT_KINDS, type ReceiptDoc, type ReceiptShop } from '../lib/print'
+import { measureWarehouseHeight } from '../lib/printMeasure'
 import { IconAlert, IconBag, IconCheck, IconPrint, IconX } from './Icons'
 
 const PX_MM = 96 / 25.4
@@ -45,6 +46,7 @@ export default function ReceiptModal({ order, initialType = 'store', onClose }: 
           postcode: s.storePostcode,
           phone: s.storePhone,
           logo: s.storeLogo,
+          footer: s.receiptFooter,
           noteExclusions: s.noteExclusions,
         })
       })
@@ -91,7 +93,23 @@ export default function ReceiptModal({ order, initialType = 'store', onClose }: 
     return () => window.removeEventListener('keydown', onKey)
   }, [busy, onClose])
 
-  const doc: ReceiptDoc = useMemo(() => buildReceiptDoc(order, type, shop, notes), [order, type, shop, notes])
+  // Warehouse labels are height-exact: the natural content height is measured
+  // in a hidden frame and +10mm blank bottom is added (estimate stays as fallback).
+  const [doc, setDoc] = useState<ReceiptDoc>(() => buildReceiptDoc(order, type, shop, notes))
+  useEffect(() => {
+    let cancelled = false
+    const base = buildReceiptDoc(order, type, shop, notes)
+    setDoc(base)
+    if (base.type !== 'warehouse') return
+    measureWarehouseHeight(order, shop, notes)
+      .then((h) => {
+        if (!cancelled && h) setDoc({ ...base, heightMm: h })
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [order, type, shop, notes])
 
   const natW = doc.widthMm * PX_MM
   const natH = doc.heightMm * PX_MM

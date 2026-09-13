@@ -3,6 +3,8 @@ import type { AccountsSnapshot, ConnState, Settings, ViewId } from '../shared/ty
 import { api, bridgeMissing } from './api'
 import { applyAppearance } from './lib/theme'
 import { DEMO_SETTINGS } from './lib/mock'
+import AccountPinModal from './components/AccountPinModal'
+import type { AccountPinMode, AccountPinSubmit, AccountPinTarget } from './components/AccountPinModal'
 import CustomersView from './components/CustomersView'
 import ChangeLogView from './components/ChangeLogView'
 import DashboardView from './components/DashboardView'
@@ -31,6 +33,11 @@ export default function App() {
   const [accounts, setAccounts] = useState<AccountsSnapshot | null>(null)
   const [switching, setSwitching] = useState(false)
   const [switchErr, setSwitchErr] = useState<string | null>(null)
+  const [switchOk, setSwitchOk] = useState<string | null>(null)
+  // رمز شخصی اکانت کارشناس: مودال ورود/تعیین/تغییر.
+  const [pinPrompt, setPinPrompt] = useState<{ target: AccountPinTarget; mode: AccountPinMode } | null>(null)
+  const [pinBusy, setPinBusy] = useState(false)
+  const [pinError, setPinError] = useState<string | null>(null)
 
   const isConfigured = (s: Settings | null): boolean => !!(s?.siteUrl && s?.consumerKey && s?.consumerSecret)
 
@@ -43,7 +50,7 @@ export default function App() {
 
   useEffect(() => {
     refreshAccounts()
-  }, [refreshAccounts, settings?.activeAccountId, settings?.accounts?.length])
+  }, [refreshAccounts, settings?.siteUrl, settings?.activeAccountId, settings?.accounts?.length])
 
   const checkConnection = useCallback(async (cfg: Settings): Promise<boolean> => {
     if (!cfg.siteUrl || !cfg.consumerKey || !cfg.consumerSecret) {
@@ -93,7 +100,8 @@ export default function App() {
     if (ok && isConfigured(s)) setView('customers')
   }, [checkConnection])
 
-  /** سوئیچ اکانت کارشناس از سایدبار: کلیدها عوض، کش باطل، اتصال دوباره بررسی، نماها از نو. */
+  /** سوئیچ اکانت کارشناس از سایدبار: کلیدها عوض، کش باطل، اتصال دوباره بررسی، نماها از نو.
+   *  اکانت‌های رمزدار اول مودال ورود رمز را باز می‌کنند؛ اکانت بی‌رمز اولین بار مودال تعیین رمز. */
   const handleSwitchAccount = useCallback(
     async (id: string) => {
       setSwitching(true)
@@ -101,12 +109,25 @@ export default function App() {
       try {
         const r = await api.switchAccount(id)
         if (!r.ok) {
-          setSwitchErr(r.message ?? 'سوئیچ اکانت ناموفق بود.')
+          if (r.needPin) {
+            const acc = accounts?.accounts.find((a) => a.id === id)
+            if (acc) {
+              setPinPrompt({
+                target: { id: acc.id, label: acc.label, hasPin: !!acc.hasPin },
+                mode: r.hasPin ? 'enter' : 'set',
+              })
+            } else {
+              setSwitchErr(r.message ?? 'سوئیچ اکانت ناموفق بود.')
+            }
+          } else {
+            setSwitchErr(r.message ?? 'سوئیچ اکانت ناموفق بود.')
+          }
           return
         }
         const s = await api.getSettings()
         setSettings(s)
         setView('dashboard')
+        refreshAccounts()
         if (isConfigured(s)) await checkConnection(s)
       } catch (e) {
         setSwitchErr(e instanceof Error ? e.message : String(e))
@@ -114,14 +135,66 @@ export default function App() {
         setSwitching(false)
       }
     },
-    [checkConnection],
+    [accounts, checkConnection, refreshAccounts],
   )
+
+  /** ارسال رمز از مودال: enter/set = سوئیچ با رمز، change = تغییر رمز اکانت فعال. */
+  const submitPin = useCallback(
+    async (payload: AccountPinSubmit) => {
+      if (!pinPrompt || pinBusy) return
+      const { target, mode } = pinPrompt
+      setPinBusy(true)
+      setPinError(null)
+      try {
+        if (mode === 'change') {
+          const r = await api.changeAccountPin(target.id, payload.current ?? '', payload.pin)
+          if (!r.ok) {
+            setPinError(r.message ?? 'تغییر رمز ناموفق بود.')
+            return
+          }
+          setPinPrompt(null)
+          setSwitchOk('رمز اکانت به‌روزرسانی شد.')
+        } else {
+          const r = await api.switchAccount(target.id, payload.pin)
+          if (!r.ok) {
+            setPinError(r.message ?? 'ورود ناموفق بود.')
+            return
+          }
+          setPinPrompt(null)
+          const s = await api.getSettings()
+          setSettings(s)
+          setView('dashboard')
+          refreshAccounts()
+          if (isConfigured(s)) await checkConnection(s)
+        }
+      } catch (e) {
+        setPinError(e instanceof Error ? e.message : String(e))
+      } finally {
+        setPinBusy(false)
+      }
+    },
+    [pinPrompt, pinBusy, checkConnection, refreshAccounts],
+  )
+
+  /** «تغییر رمز اکانت فعال» از منوی سوئیچر — مودال change برای اکانت فعال. */
+  const handleChangeActivePin = useCallback(() => {
+    const act = accounts?.accounts.find((a) => a.id === accounts?.activeId)
+    if (!act) return
+    setPinError(null)
+    setPinPrompt({ target: { id: act.id, label: act.label, hasPin: !!act.hasPin }, mode: 'change' })
+  }, [accounts])
 
   useEffect(() => {
     if (!switchErr) return
     const t = window.setTimeout(() => setSwitchErr(null), 5200)
     return () => window.clearTimeout(t)
   }, [switchErr])
+
+  useEffect(() => {
+    if (!switchOk) return
+    const t = window.setTimeout(() => setSwitchOk(null), 4500)
+    return () => window.clearTimeout(t)
+  }, [switchOk])
 
   /** پس از افزودن/حذف اکانت در تنظیمات: تنظیمات + اتصال تازه شود، بدون پرش از تنظیمات. */
   const handleAccountsChanged = useCallback(async () => {
@@ -182,6 +255,8 @@ export default function App() {
         accounts={accounts}
         switchingAccount={switching}
         switchError={switchErr}
+        switchOk={switchOk}
+        onChangeActivePin={handleChangeActivePin}
         onSwitchAccount={handleSwitchAccount}
         onNavigate={setView}
       />
@@ -257,6 +332,19 @@ export default function App() {
           <SettingsView settings={settings} conn={conn} onSaved={handleSaved} onAccountsChanged={handleAccountsChanged} />
         )}
       </main>
+      {pinPrompt && (
+        <AccountPinModal
+          target={pinPrompt.target}
+          mode={pinPrompt.mode}
+          busy={pinBusy}
+          error={pinError}
+          onSubmit={submitPin}
+          onClose={() => {
+            setPinPrompt(null)
+            setPinError(null)
+          }}
+        />
+      )}
     </div>
   )
 }

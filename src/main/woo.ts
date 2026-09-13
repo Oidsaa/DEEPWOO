@@ -6,34 +6,18 @@ import type {
   Coupon,
   Customer,
   CustomerPayload,
-  CustomersResult,
-  ListCustomersQuery,
-  ListOrdersQuery,
-  ListProductsQuery,
   Order,
   OrderNote,
   OrderNotePayload,
   OrderPayload,
   OrderUpdatePayload,
-  OrdersListResult,
-  OrdersResult,
-  OrderStatusTotal,
   Product,
-  ProductCatalog,
   ProductDetail,
-  ProductOrdersResult,
   ProductPatch,
   ProductPayload,
-  ProductsResult,
   ProductVariation,
-  ReportsQuery,
-  SalesReport,
-  StoreStats,
   VariationPatch,
 } from '../shared/types'
-import { phonesMatch } from '../shared/phone'
-import { persianMonthKey } from '../shared/persianMonth'
-import { aggregateSalesReport, resolveReportWindow } from '../shared/reports'
 import { normalizeSiteUrl } from './settings'
 
 export interface WooConfig {
@@ -283,286 +267,48 @@ export async function getServerChangeLog(cfg: WooConfig, q: ChangeLogQuery): Pro
 
 /**
  * Customers are listed via wc/v2 (NOT v3): the v3 endpoint intentionally omits
- * `orders_count` and `total_spent` for performance, while the table and the
- * order-history summary depend on both. v2 returns every other field identically
- * (same records, same pagination/search/orderby support). Create/update stay on
- * v3 — see createCustomer() — and wc/v2 answers whenever wc/v3 does, because
- * both live behind WooCommerce's same legacy REST API module.
+ * `orders_count` and `total_spent` for performance, while the sync needs the
+ * full record. v2 returns every field identically (same records, same
+ * pagination/search/orderby support). Create/update stay on v3 — see
+ * createCustomer() — and wc/v2 answers whenever wc/v3 does, because both live
+ * behind WooCommerce's same legacy REST API module.
  */
-export async function listCustomers(cfg: WooConfig, query: ListCustomersQuery): Promise<CustomersResult> {
-  const page = Math.max(1, query.page ?? 1)
-  const perPage = Math.min(100, Math.max(1, query.perPage ?? 100))
 
-  const params: Record<string, string | number> = {
-    page,
-    per_page: perPage,
-    // Customers accept id | include | name | registered_date — NOT `registered`/`date`.
-    orderby: 'registered_date',
-    order: 'desc',
-  }
-  const search = query.search?.trim()
-  if (search) params.search = search
-
-  // Quick-order mobile lookup: the customers endpoint has no phone filter, so
-  // probe page 1 (newest customers) and — only when it has no match — sweep the
-  // remaining pages concurrently (bounded), matching billing phone with lenient
-  // normalization (۰۹۱۲… / +98912… / 912… are all the same number).
-  if (query.phone) {
-    const probe = await wooRequest<Customer[]>(
-      cfg,
-      'GET',
-      '/customers',
-      { page: 1, per_page: 100, orderby: 'registered_date', order: 'desc' },
-      undefined,
-      'v2',
-    )
-    const matches: Customer[] = probe.data.filter((c) => phonesMatch(c.billing?.phone, query.phone))
-    if (matches.length === 0) {
-      const total = Number(probe.headers.get('x-wp-total') ?? probe.data.length)
-      const pages = Math.min(MAX_PHONE_SCAN_PAGES, Math.max(1, Math.ceil(total / 100)))
-      if (pages > 1) {
-        const sweeps = await Promise.all(
-          Array.from({ length: pages - 1 }, (_, i) =>
-            wooRequest<Customer[]>(
-              cfg,
-              'GET',
-              '/customers',
-              { page: i + 2, per_page: 100, orderby: 'registered_date', order: 'desc' },
-              undefined,
-              'v2',
-            ),
-          ),
-        )
-        for (const sweep of sweeps) {
-          for (const c of sweep.data) if (phonesMatch(c.billing?.phone, query.phone)) matches.push(c)
-        }
-      }
-    }
-    return { customers: matches, total: matches.length, totalPages: 1, page: 1, perPage: matches.length }
-  }
-
-  const { data, headers } = await wooRequest<Customer[]>(cfg, 'GET', '/customers', params, undefined, 'v2')
-
-  // Replace each row's total_spent (store semantics: paid orders only) with the
-  // app's rule-based total (every status except failed/cancelled/refunded). A
-  // per-customer failure keeps the store value so a slow/flaky order never
-  // breaks the whole list; computed values are cached per session.
-  await mapLimit(
-    data.filter((c) => (Number(c.orders_count) || 0) > 0),
-    8,
-    async (c) => {
-      try {
-        c.total_spent = String(await purchaseSumCached(cfg, c))
-      } catch {
-        /* keep the store-provided total_spent */
-      }
-    },
-  )
-
-  return {
-    customers: data,
-    total: Number(headers.get('x-wp-total') ?? data.length),
-    totalPages: Math.max(1, Number(headers.get('x-wp-totalpages') ?? 1)),
-    page,
-    perPage,
-  }
-}
-
-/** Cap on pages walked when snapshotting the customers (100 per page). */
-const MAX_CUSTOMER_SNAPSHOT_PAGES = 100 // 100 × 100 = up to 10,000 customers
-
-/** Compact field set kept in the local customers snapshot (phone matching). */
-const CUSTOMER_LITE_FIELDS = 'id,username,first_name,last_name,email,billing'
+/** Cap on pages walked while syncing the customers (100 per page). */
+export const MAX_CUSTOMER_SYNC_PAGES = 100 // 100 × 100 = up to 10,000 customers
 
 /**
- * Full (bounded) customers snapshot, newest registrations first. Only the
- * compact field set is requested (`_fields`) so the snapshot stays small.
- * Powers the INSTANT quick-order mobile lookup from the local cache instead of
- * a per-keystroke sweep of the store's customer pages.
+ * Generic REST list walker: pages a listing endpoint until a page comes back
+ * short, the endpoint reports no more pages, or `maxPages` is reached. The
+ * caller folds each page into the local store (or aggregates it); the result
+ * reports whether the page cap truncated the walk (→ sync_state.truncated).
  */
-export async function fetchAllCustomersLite(cfg: WooConfig): Promise<Customer[]> {
-  const out: Customer[] = []
+export async function walkApiPages<T>(opts: {
+  fetchPage: (page: number) => Promise<{ items: T[]; totalPages: number }>
+  maxPages: number
+  /** Return false to stop the walk early (early-stop is NOT truncation). */
+  onPage: (items: T[]) => void | false
+}): Promise<{ total: number; pages: number; truncated: boolean }> {
   let page = 0
+  let total = 0
   let totalPages = 1
   for (;;) {
     page += 1
-    const { data, headers } = await wooRequest<Customer[]>(
-      cfg,
-      'GET',
-      '/customers',
-      { page, per_page: 100, orderby: 'registered_date', order: 'desc', _fields: CUSTOMER_LITE_FIELDS },
-      undefined,
-      'v2',
-    )
-    if (page === 1) totalPages = Math.max(1, Number(headers.get('x-wp-totalpages') ?? 1))
-    out.push(...data)
-    if (data.length === 0 || page >= totalPages || page >= MAX_CUSTOMER_SNAPSHOT_PAGES) break
-  }
-  return out
-}
-
-/**
- * Incremental refresh of the customers snapshot: with a previous copy only the
- * newest pages are probed for NEW registrations (registered_date desc) and
- * folded in by id — the full walk runs only on the first build or after a
- * manual refresh. (Customer edits/deletions are rare; the next full walk
- * repairs them.)
- */
-export async function syncCustomersSnapshot(cfg: WooConfig, prev: Customer[] | undefined): Promise<Customer[]> {
-  if (!prev) return fetchAllCustomersLite(cfg)
-  const byId = new Map(prev.map((c) => [c.id, c]))
-  let page = 0
-  let totalPages = 1
-  for (;;) {
-    page += 1
-    const { data, headers } = await wooRequest<Customer[]>(
-      cfg,
-      'GET',
-      '/customers',
-      { page, per_page: 100, orderby: 'registered_date', order: 'desc', _fields: CUSTOMER_LITE_FIELDS },
-      undefined,
-      'v2',
-    )
-    if (page === 1) totalPages = Math.max(1, Number(headers.get('x-wp-totalpages') ?? 1))
-    let fresh = 0
-    for (const c of data) {
-      if (!byId.has(c.id)) fresh += 1
-      byId.set(c.id, c)
-    }
-    if (data.length === 0 || page >= totalPages || page >= 5) break
-    if (fresh === 0) break
-  }
-  return [...byId.values()]
-}
-
-/** Statuses shown by default (trash is never returned). */
-const PRODUCT_STATUSES = ['publish', 'draft', 'private', 'pending']
-/** Safety cap per status while merging the "all statuses" view. */
-const MAX_PRODUCT_STATUS_PAGES = 10 // 10 × 100 = 1000 products per status
-/** Safety cap while scanning customers by phone (100 per page). */
-const MAX_PHONE_SCAN_PAGES = 25 // 25 × 100 = up to 2,500 customers scanned
-
-/**
- * Product list (GET /products), newest first.
- *
- * The REST API accepts ONE product status per call on every WooCommerce
- * version (multi-value lists such as `publish,draft` are rejected as an
- * invalid parameter on older/plugin-guarded stores), so the requested status
- * (or each default status when "همهٔ وضعیت‌ها" is chosen) is fetched in
- * parallel, page by page, and merged & sorted locally.
- *
- * Every matching page is fetched so the result carries exact aggregates —
- * inStock / outOfStock / totalSales — over ALL matching products, and the
- * requested page is sliced out locally (the widgets above the table are
- * therefore never limited to the current page).
- */
-export async function listProducts(
-  cfg: WooConfig,
-  query: ListProductsQuery,
-): Promise<ProductsResult> {
-  const page = Math.max(1, query.page ?? 1)
-  const perPage = Math.min(100, Math.max(1, query.perPage ?? 100))
-  const requested = (query.status ?? '').trim()
-  const search = query.search?.trim()
-  const stock = (query.stockStatus ?? '').trim()
-
-  const statuses = requested ? [requested] : PRODUCT_STATUSES
-
-  const fetchStatus = async (status: string, applyStock: boolean): Promise<Product[]> => {
-    const all: Product[] = []
-    let p = 1
-    for (;;) {
-      const params: Record<string, string | number> = {
-        page: p,
-        per_page: 100,
-        status,
-        orderby: 'date',
-        order: 'desc',
-      }
-      if (search) params.search = search
-      if (applyStock && stock) params.stock_status = stock
-      const { data, headers } = await wooRequest<Product[]>(cfg, 'GET', '/products', params)
-      all.push(...data)
-      const totalPages = Math.max(1, Number(headers.get('x-wp-totalpages') ?? 1))
-      if (p >= totalPages || data.length === 0 || p >= MAX_PRODUCT_STATUS_PAGES) break
-      p += 1
-    }
-    return all
-  }
-
-  // Row list and aggregates. The aggregates deliberately ignore the stock
-  // segment so the stat widgets always describe the whole filtered store
-  // (search + publication status), never just the currently shown segment.
-  let rowsGroups: Product[][]
-  let statsGroups: Product[][]
-  if (stock) {
-    ;[rowsGroups, statsGroups] = await Promise.all([
-      Promise.all(statuses.map((s) => fetchStatus(s, true))),
-      Promise.all(statuses.map((s) => fetchStatus(s, false))),
-    ])
-  } else {
-    statsGroups = await Promise.all(statuses.map((s) => fetchStatus(s, false)))
-    rowsGroups = statsGroups
-  }
-
-  const byDate = (a: Product, b: Product) => +new Date(b.date_created) - +new Date(a.date_created)
-  const rows = rowsGroups.flat().sort(byDate)
-  const stats = statsGroups.flat().sort(byDate)
-  const total = rows.length
-  const totalAll = stats.length
-  const inStock = stats.filter((p) => p.stock_status === 'instock').length
-  const outOfStock = stats.filter((p) => p.stock_status === 'outofstock').length
-  const totalSales = round2(stats.reduce((acc, p) => acc + (Number(p.total_sales) || 0), 0))
-  const totalPages = Math.max(1, Math.ceil(total / perPage))
-  const start = (page - 1) * perPage
-  return {
-    products: rows.slice(start, start + perPage),
-    total,
-    totalPages,
-    page,
-    perPage,
-    totalAll,
-    inStock,
-    outOfStock,
-    totalSales,
-  }
-}
-
-/**
- * Full (bounded) product catalog — every non-trash status, newest first.
- * Powers the محصولات/موجودی report tabs (top-rated + low-stock alerts),
- * which need every page of the catalog at once (listProducts only returns
- * the requested page slice).
- */
-export async function getProductCatalog(cfg: WooConfig): Promise<ProductCatalog> {
-  const out: Product[] = []
-  let truncated = false
-  for (const status of PRODUCT_STATUSES) {
-    let p = 0
-    for (;;) {
-      p += 1
-      const { data, headers } = await wooRequest<Product[]>(
-        cfg,
-        'GET',
-        '/products',
-        { page: p, per_page: 100, status, orderby: 'date', order: 'desc' },
-      )
-      out.push(...data)
-      const totalPages = Math.max(1, Number(headers.get('x-wp-totalpages') ?? 1))
-      if (data.length === 0 || p >= totalPages) break
-      if (p >= MAX_PRODUCT_STATUS_PAGES) {
-        truncated = true
-        break
-      }
+    const { items, totalPages: tp } = await opts.fetchPage(page)
+    if (page === 1) totalPages = Math.max(1, tp)
+    const stop = opts.onPage(items) === false
+    total += items.length
+    if (stop) return { total, pages: page, truncated: false }
+    if (items.length === 0 || page >= totalPages || page >= opts.maxPages) {
+      return { total, pages: page, truncated: page >= opts.maxPages && page < totalPages }
     }
   }
-  const products = out.sort((a, b) => +new Date(b.date_created) - +new Date(a.date_created))
-  return { products, total: products.length, truncated }
 }
 
 /**
  * Full product record plus its variations (variable products only). Reads
- * every variation page up to a hard cap of 2000 variations.
+ * every variation page up to a hard cap of 2000 variations. Used as the API
+ * fallback for a product the local store has not seen yet.
  */
 export async function getProductDetail(cfg: WooConfig, productId: number): Promise<ProductDetail> {
   const { data } = await wooRequest<Product>(cfg, 'GET', '/products/' + productId)
@@ -614,56 +360,6 @@ export async function createProduct(cfg: WooConfig, payload: ProductPayload): Pr
   return data
 }
 
-const MAX_PRODUCT_ORDER_PAGES = 20 // 20 × 100 = 2000 orders scanned max per product
-
-/**
- * Orders that contain a given product (incl. its variations — the `product`
- * filter matches the parent product id on line items), newest first. Only
- * orders whose status counts toward sales are returned and counted (the same
- * rule as customer totals: failed / cancelled / refunded orders are excluded
- * from the list, the order count, the units and the revenue sum).
- */
-export async function listProductOrders(cfg: WooConfig, productId: number): Promise<ProductOrdersResult> {
-  // No explicit `status` parameter: it is rejected as invalid on some stores,
-  // and "all statuses" is the orders endpoint's own default anyway.
-  const pageParams = (page: number) =>
-    ({
-      product: productId,
-      per_page: 100,
-      page,
-      orderby: 'date',
-      order: 'desc',
-    }) as Record<string, string | number>
-
-  // Scan every page (bounded) so the filtered count is exact.
-  const all: Order[] = []
-  let totalPages = 1
-  let page = 0
-  for (;;) {
-    page += 1
-    const res = await wooRequest<Order[]>(cfg, 'GET', '/orders', pageParams(page))
-    if (page === 1) totalPages = Math.max(1, Number(res.headers.get('x-wp-totalpages') ?? 1))
-    all.push(...res.data)
-    if (res.data.length === 0 || page >= totalPages || page >= MAX_PRODUCT_ORDER_PAGES) break
-  }
-  const truncated = page >= MAX_PRODUCT_ORDER_PAGES && page < totalPages
-
-  const productLines = (o: Order) => o.line_items.filter((l) => (l.product_id ?? productId) === productId)
-  const valid = all.filter((o) => countsTowardPurchase(o.status))
-  const unitsSold = valid.reduce((acc, o) => acc + productLines(o).reduce((s, l) => s + (Number(l.quantity) || 0), 0), 0)
-  const revenueSum = round2(valid.reduce((acc, o) => acc + (Number(o.total) || 0), 0))
-
-  return {
-    orders: valid,
-    total: valid.length,
-    unitsSold,
-    revenueSum,
-    excluded: all.length - valid.length,
-    revenueTruncated: truncated,
-    truncated,
-  }
-}
-
 /** Create a customer (POST /customers). Requires a Read/Write API key. */
 export async function createCustomer(cfg: WooConfig, payload: CustomerPayload): Promise<Customer> {
   const { data } = await wooRequest<Customer>(cfg, 'POST', '/customers', {}, payload)
@@ -687,70 +383,11 @@ export async function findCoupon(cfg: WooConfig, code: string): Promise<Coupon |
 }
 
 /* ------------------------------------------------------------------ */
-/* Sales report (گزارش‌های فروش)                                        */
+/* Orders snapshot walk (سفارش‌ها — feeds the local store)               */
 /* ------------------------------------------------------------------ */
 
-/** Safety cap while scanning the report window (100 orders per page). */
-const MAX_REPORT_PAGES = 200 // 200 × 100 = up to 20,000 orders scanned
-
-/**
- * Sales report for the last N days (including today): walks every page of
- * orders in the window and aggregates revenue / counts / top products via the
- * shared pure aggregator (same app rule as everywhere else in the app).
- */
-export async function getSalesReports(
-  cfg: WooConfig,
-  query: ReportsQuery,
-  costs?: Record<string, number>,
-): Promise<SalesReport> {
-  const { fromMs, toMs, days } = resolveReportWindow(query)
-  const from = new Date(fromMs)
-  const to = new Date(toMs + 1) // exclusive end → includes the whole last day
-  // The equal-length window right before the report window (the «دورهٔ قبل»).
-  const prevFrom = new Date(from)
-  prevFrom.setDate(prevFrom.getDate() - days)
-
-  // Scan each window in its own capped loop so the previous period can never
-  // crowd the report's own (more recent) orders out of the page cap.
-  const scan = async (after: Date, before: Date): Promise<{ orders: Order[]; truncated: boolean }> => {
-    const out: Order[] = []
-    let page = 0
-    let totalPages = 1
-    for (;;) {
-      page += 1
-      const res = await wooRequest<Order[]>(
-        cfg,
-        'GET',
-        '/orders',
-        {
-          per_page: 100,
-          page,
-          orderby: 'date',
-          order: 'asc',
-          after: after.toISOString(),
-          before: before.toISOString(),
-        },
-      )
-      if (page === 1) totalPages = Math.max(1, Number(res.headers.get('x-wp-totalpages') ?? 1))
-      out.push(...res.data)
-      if (res.data.length < 100 || page >= totalPages || page >= MAX_REPORT_PAGES) break
-    }
-    return { orders: out, truncated: page >= MAX_REPORT_PAGES && page < totalPages }
-  }
-
-  const [cur, prev] = await Promise.all([scan(from, to), scan(prevFrom, from)])
-  return {
-    ...aggregateSalesReport(cur.orders, days, fromMs, toMs, costs, prev.orders),
-    truncated: cur.truncated || prev.truncated,
-  }
-}
-
-/* ------------------------------------------------------------------ */
-/* Store-wide orders list (سفارش‌ها)                                    */
-/* ------------------------------------------------------------------ */
-
-/** Hard cap on pages walked when snapshotting the whole orders list. */
-const MAX_ORDER_PAGES = 200 // 200 × 100 = up to 20,000 orders
+/** Hard cap on pages walked when syncing the whole orders list. */
+export const MAX_ORDER_SYNC_PAGES = 200 // 200 × 100 = up to 20,000 orders
 
 /** Retries per orders page — shared hosting drops connections occasionally. */
 const PAGE_RETRIES = 3
@@ -777,7 +414,9 @@ async function ordersPageWithRetry(
         {
           per_page: 100,
           page,
-          orderby: 'date',
+          // Immutable sort key: ids never reorder, so paged walks stay stable
+          // even while the store is live (date-sorted pages drift and skip rows).
+          orderby: 'id',
           order: 'desc',
           ...extra,
         },
@@ -793,337 +432,195 @@ async function ordersPageWithRetry(
 }
 
 /**
- * Snapshot of ALL the store's orders, newest first (every status included).
- *
- * The desktop cache keeps this under a single key ('orders-all'), so the
- * orders page can serve status-filter, search and pagination changes LOCALLY:
- * clicking the status chips or typing in the search box reuses the last
- * snapshot instead of re-downloading the store. The snapshot is invalidated
- * like any other read — by writes (bumpCacheVersion), the list TTL, or a
- * manual «بارگذاری مجدد» (clearCaches).
+ * One page of the store's orders, every status included, with retries. Feeds
+ * the local store's orders sync (walkApiPages drives the paging).
  */
-export async function fetchAllOrders(cfg: WooConfig): Promise<Order[]> {
-  const firstRes = await ordersPageWithRetry(cfg, 1)
-  const first = firstRes.data
-  // One page of 100 comes back short → the store has no more orders.
-  if (first.length < 100) {
-    return Promise.all(first.map(async (o) => ({ ...o, customer_name: await customerNameOf(cfg, o) })))
-  }
-  const totalPages = Math.min(
-    MAX_ORDER_PAGES,
-    Math.max(1, Number(firstRes.headers.get('x-wp-totalpages') ?? 1)),
-  )
-  const pages = Array.from({ length: totalPages - 1 }, (_, i) => i + 2)
-
-  // Remaining pages concurrently (bounded): each worker takes the next page.
-  const rest: Order[][] = new Array(pages.length)
-  let cursor = 0
-  await Promise.all(
-    Array.from({ length: Math.min(6, pages.length) }, async () => {
-      for (;;) {
-        const idx = cursor++
-        if (idx >= pages.length) return
-        rest[idx] = (await ordersPageWithRetry(cfg, pages[idx])).data
-      }
-    }),
-  )
-  const orders = [...first, ...rest.flat()]
-  return Promise.all(orders.map(async (o) => ({ ...o, customer_name: await customerNameOf(cfg, o) })))
-}
-
-/* ------------------------------------------------------------------ */
-/* Incremental snapshot sync (همگام‌سازی افزایشی)                        */
-/* ------------------------------------------------------------------ */
-
-/**
- * Every sync cursor is rewound by this margin so orders/products written on
- * the server DURING a sync (or host/desktop clock skew) are never skipped by
- * the next delta. Cursors are ms epochs sent as GMT ISO (modified_after works
- * against date_modified_gmt) — no store-timezone ambiguity at all.
- */
-const SYNC_OVERLAP_MS = 5 * 60 * 1000
-/** Minimum gap between two delete-scans (cheap id-only walks) per store. */
-const DELETE_SCAN_GAP_MS = 10 * 60 * 1000
-/** Per-store stamps of the last delete-scan (orders and products separately). */
-const lastDeleteScan = new Map<string, number>()
-
-export interface SnapshotSync<T> {
-  value: T
-  /** New sync cursor (ms epoch) — persist it with cache setSyncMark(). */
-  since: number
-}
-
-/**
- * All order ids of the store (same scope as fetchAllOrders: every status,
- * trash excluded) via cheap `_fields=id` pages. Returns null when the walk
- * could not complete — the caller must then SKIP deletions, because deleting
- * against a partial id list would wrongly drop everything beyond the scanned
- * pages.
- */
-async function scanOrderIds(cfg: WooConfig): Promise<Set<number> | null> {
-  const ids = new Set<number>()
-  let page = 0
-  let totalPages = 1
-  for (;;) {
-    page += 1
-    try {
-      const res = await ordersPageWithRetry(cfg, page, { _fields: 'id' })
-      if (page === 1) totalPages = Math.max(1, Number(res.headers.get('x-wp-totalpages') ?? 1))
-      for (const o of res.data) ids.add(o.id)
-      if (res.data.length === 0 || page >= totalPages) break
-      if (page >= MAX_ORDER_PAGES) return null
-    } catch {
-      return null
-    }
-  }
-  return ids
-}
-
-/**
- * Incremental version of fetchAllOrders(). With a previous snapshot and its
- * sync cursor only orders modified after the cursor are downloaded
- * (modified_after) and folded in by id; orders deleted on the store (trashed)
- * are dropped by a throttled id-only diff scan. Stores too old to know
- * `modified_after` ignore the parameter and return everything — the merge is
- * idempotent, so the sync stays CORRECT (just not incremental). A missing or
- * empty previous snapshot re-baselines with a full walk.
- */
-export async function syncOrdersSnapshot(
+export async function walkOrderPages(
   cfg: WooConfig,
-  prev: Order[] | undefined,
-  sinceMs?: number,
-): Promise<SnapshotSync<Order[]>> {
-  if (!prev || prev.length === 0 || !sinceMs) {
-    const orders = await fetchAllOrders(cfg)
-    return { value: orders, since: Date.now() - SYNC_OVERLAP_MS }
-  }
-
-  const modifiedAfter = new Date(sinceMs).toISOString()
-  const changed: Order[] = []
-  let page = 0
-  let totalPages = 1
-  for (;;) {
-    page += 1
-    const res = await ordersPageWithRetry(cfg, page, { modified_after: modifiedAfter })
-    if (page === 1) totalPages = Math.max(1, Number(res.headers.get('x-wp-totalpages') ?? 1))
-    changed.push(...res.data)
-    if (res.data.length === 0 || page >= totalPages || page >= MAX_ORDER_PAGES) break
-  }
-
-  // Enrich changed rows with the same display-name rule as a full walk
-  // (billing name → account lookup, cached), then fold them in by id.
-  const enriched = await Promise.all(changed.map(async (o) => ({ ...o, customer_name: await customerNameOf(cfg, o) })))
-  const byId = new Map(prev.map((o) => [o.id, o]))
-  for (const o of enriched) byId.set(o.id, o)
-  let orders = [...byId.values()]
-
-  const now = Date.now()
-  if (now - (lastDeleteScan.get(cfg.siteUrl + '|orders') ?? 0) >= DELETE_SCAN_GAP_MS) {
-    lastDeleteScan.set(cfg.siteUrl + '|orders', now)
-    const ids = await scanOrderIds(cfg)
-    if (ids) orders = orders.filter((o) => ids.has(o.id))
-  }
-
-  orders.sort((a, b) => +new Date(b.date_created) - +new Date(a.date_created))
-  return { value: orders, since: now - SYNC_OVERLAP_MS }
+  extra: Record<string, string | number> = {},
+  onPage: (orders: Order[]) => void,
+): Promise<{ total: number; truncated: boolean }> {
+  const res = await walkApiPages<Order>({
+    fetchPage: async (page) => {
+      const r = await ordersPageWithRetry(cfg, page, extra)
+      return { items: r.data, totalPages: Math.max(1, Number(r.headers.get('x-wp-totalpages') ?? 1)) }
+    },
+    maxPages: MAX_ORDER_SYNC_PAGES,
+    onPage,
+  })
+  return { total: res.total, truncated: res.truncated }
 }
 
 /**
- * All product ids across the catalog's statuses (cheap `_fields=id` pages).
- * Returns null when the walk could not complete (see scanOrderIds).
+ * All order ids of the store (cheap `_fields=id` pages) — delete-diff scan.
+ * Null on error; `truncated` true when the walk hit the page cap OR the
+ * fetched distinct ids don't cover the header total (unstable pagination /
+ * lost rows) — either way the caller must skip deletions: an incomplete
+ * remote id list must never delete local rows.
  */
-async function scanProductIds(cfg: WooConfig): Promise<Set<number> | null> {
+export async function scanOrderIds(cfg: WooConfig): Promise<{ ids: Set<number>; truncated: boolean } | null> {
   const ids = new Set<number>()
-  for (const status of PRODUCT_STATUSES) {
-    let page = 0
-    for (;;) {
-      page += 1
-      try {
-        const { data, headers } = await wooRequest<Product[]>(cfg, 'GET', '/products', {
-          page,
-          per_page: 100,
-          status,
-          orderby: 'date',
-          order: 'desc',
-          _fields: 'id',
-        })
-        for (const p of data) ids.add(p.id)
-        const totalPages = Math.max(1, Number(headers.get('x-wp-totalpages') ?? 1))
-        if (data.length === 0 || page >= totalPages) break
-        if (page >= MAX_PRODUCT_STATUS_PAGES) return null
-      } catch {
-        return null
-      }
-    }
+  let total = 0
+  try {
+    const res = await walkApiPages<Order>({
+      fetchPage: async (page) => {
+        const r = await ordersPageWithRetry(cfg, page, { _fields: 'id' })
+        if (page === 1) total = Number(r.headers.get('x-wp-total') ?? 0) || 0
+        return { items: r.data, totalPages: Math.max(1, Number(r.headers.get('x-wp-totalpages') ?? 1)) }
+      },
+      maxPages: MAX_ORDER_SYNC_PAGES,
+      onPage: (items) => {
+        for (const o of items) ids.add(o.id)
+      },
+    })
+    const incomplete = res.truncated || (total > 0 && ids.size < total)
+    return { ids, truncated: incomplete }
+  } catch {
+    return null
   }
-  return ids
 }
 
-/**
- * Incremental version of getProductCatalog(): modified_after delta per catalog
- * status, idempotent fold-in by id, throttled complete-scan deletion diff —
- * the same rules as syncOrdersSnapshot(). The truncated flag survives from the
- * previous snapshot (a delta cannot repair a truncated baseline) and is
- * re-armed when a delta walk hits the per-status page cap.
- */
-export async function syncProductCatalog(
-  cfg: WooConfig,
-  prev: ProductCatalog | undefined,
-  sinceMs?: number,
-): Promise<SnapshotSync<ProductCatalog>> {
-  if (!prev || prev.products.length === 0 || !sinceMs) {
-    const catalog = await getProductCatalog(cfg)
-    return { value: catalog, since: Date.now() - SYNC_OVERLAP_MS }
-  }
+/** Safety cap per status while syncing the product catalog. */
+export const MAX_PRODUCT_SYNC_PAGES = 10 // 10 × 100 = 1000 products per status
 
-  const modifiedAfter = new Date(sinceMs).toISOString()
-  const changed: Product[] = []
-  let truncated = prev.truncated
-  for (const status of PRODUCT_STATUSES) {
-    let page = 0
-    for (;;) {
-      page += 1
+/**
+ * Walk one product status' listing (newest first), folding every page into
+ * `onPage`. Feeds the local store's products sync; the delta pass passes a
+ * `modified_after` ISO stamp (stores too old to know the parameter return
+ * everything — the upserts are idempotent, so the sync stays correct).
+ */
+export async function walkProductPages(
+  cfg: WooConfig,
+  status: string,
+  extra: Record<string, string | number> = {},
+  onPage: (products: Product[]) => void,
+): Promise<{ total: number; truncated: boolean }> {
+  const res = await walkApiPages<Product>({
+    fetchPage: async (page) => {
       const { data, headers } = await wooRequest<Product[]>(cfg, 'GET', '/products', {
         page,
         per_page: 100,
         status,
-        orderby: 'date',
+        orderby: 'id',
         order: 'desc',
-        modified_after: modifiedAfter,
+        ...extra,
       })
-      changed.push(...data)
-      const totalPages = Math.max(1, Number(headers.get('x-wp-totalpages') ?? 1))
-      if (data.length === 0 || page >= totalPages) break
-      if (page >= MAX_PRODUCT_STATUS_PAGES) {
-        truncated = true
-        break
-      }
-    }
-  }
-
-  const byId = new Map(prev.products.map((p) => [p.id, p]))
-  for (const p of changed) byId.set(p.id, p)
-  let products = [...byId.values()]
-
-  const now = Date.now()
-  if (now - (lastDeleteScan.get(cfg.siteUrl + '|products') ?? 0) >= DELETE_SCAN_GAP_MS) {
-    lastDeleteScan.set(cfg.siteUrl + '|products', now)
-    const ids = await scanProductIds(cfg)
-    if (ids) products = products.filter((p) => ids.has(p.id))
-  }
-
-  products.sort((a, b) => +new Date(b.date_created) - +new Date(a.date_created))
-  return { value: { products, total: products.length, truncated }, since: now - SYNC_OVERLAP_MS }
+      return { items: data, totalPages: Math.max(1, Number(headers.get('x-wp-totalpages') ?? 1)) }
+    },
+    maxPages: MAX_PRODUCT_SYNC_PAGES,
+    onPage,
+  })
+  return { total: res.total, truncated: res.truncated }
 }
 
 /**
- * Local filtering/pagination over a full orders snapshot (mirrors the demo
- * mock): search across order number, customer name, phone and email; optional
- * status filter; newest-first page slice.
+ * All product ids across the catalog's statuses (cheap `_fields=id` pages) —
+ * delete-diff scan. Null on error; `truncated` true when any status's walk hit
+ * the page cap or its distinct ids don't cover the header total — the caller
+ * must then skip deletions (an incomplete id list must never delete rows).
  */
-export function filterAndPaginateOrders(all: Order[], query: ListOrdersQuery): OrdersListResult {
-  const search = (query.search ?? '').trim().toLowerCase()
-  let list = all
-  if (search) {
-    list = list.filter(
-      (o) =>
-        String(o.number ?? o.id).toLowerCase().includes(search) ||
-        (o.customer_name ?? '').toLowerCase().includes(search) ||
-        (o.billing?.phone ?? '').toLowerCase().includes(search) ||
-        (o.billing?.email ?? '').toLowerCase().includes(search),
-    )
-  }
-  const status = (query.status ?? '').trim()
-  if (status) list = list.filter((o) => o.status === status)
-
-  const perPage = Math.min(100, Math.max(1, query.perPage ?? 50))
-  const page = Math.max(1, query.page ?? 1)
-  const start = (page - 1) * perPage
-  return {
-    orders: list.slice(start, start + perPage),
-    total: list.length,
-    totalPages: Math.max(1, Math.ceil(list.length / perPage)),
-    page,
-    perPage,
-  }
-}
-
-/** Session cache of customer display names for orders whose billing name is empty. */
-const customerNameCache = new Map<string, string>()
-
-/** Display name of an order's customer: billing name first, then the account. */
-async function customerNameOf(cfg: WooConfig, order: Order): Promise<string> {
-  const billingName = [order.billing?.first_name, order.billing?.last_name].filter(Boolean).join(' ').trim()
-  if (billingName) return billingName
-  const id = order.customer_id
-  if (!id) return 'مشتری مهمان'
-  const key = cfg.siteUrl + '|' + id
-  const hit = customerNameCache.get(key)
-  if (hit) return hit
+export async function scanProductIds(
+  cfg: WooConfig,
+  statuses: string[],
+): Promise<{ ids: Set<number>; truncated: boolean } | null> {
+  const ids = new Set<number>()
+  let truncated = false
   try {
-    const { data } = await wooRequest<Customer>(cfg, 'GET', '/customers/' + id)
-    const name = [data.first_name, data.last_name].filter(Boolean).join(' ').trim()
-    if (name) {
-      customerNameCache.set(key, name)
-      return name
+    for (const status of statuses) {
+      let total = 0
+      const res = await walkApiPages<Product>({
+        fetchPage: async (page) => {
+          const { data, headers } = await wooRequest<Product[]>(cfg, 'GET', '/products', {
+            page,
+            per_page: 100,
+            status,
+            orderby: 'id',
+            order: 'desc',
+            _fields: 'id',
+          })
+          if (page === 1) total = Number(headers.get('x-wp-total') ?? 0) || 0
+          return { items: data, totalPages: Math.max(1, Number(headers.get('x-wp-totalpages') ?? 1)) }
+        },
+        maxPages: MAX_PRODUCT_SYNC_PAGES,
+        onPage: (items) => {
+          for (const p of items) ids.add(p.id)
+        },
+      })
+      truncated = truncated || res.truncated || (total > 0 && res.total < total)
     }
   } catch {
-    // Account may be deleted — fall through to the id-based label.
+    return null
   }
-  const label = 'مشتری #' + id
-  customerNameCache.set(key, label)
-  return label
+  return { ids, truncated }
+}
+
+/** Page cap while walking one variable product's combinations. */
+export const MAX_VARIATION_WALK_PAGES = 20
+
+/**
+ * Every combination of one variable product (id asc), folded into `onPage`
+ * page by page. The caller upserts the variations into the local store.
+ */
+export async function walkVariationPages(
+  cfg: WooConfig,
+  productId: number,
+  onPage: (variations: ProductVariation[]) => void,
+): Promise<void> {
+  await walkApiPages<ProductVariation>({
+    fetchPage: async (page) => {
+      const { data, headers } = await wooRequest<ProductVariation[]>(
+        cfg,
+        'GET',
+        `/products/${productId}/variations`,
+        { per_page: 100, page, orderby: 'id', order: 'asc' },
+      )
+      return { items: data, totalPages: Math.max(1, Number(headers.get('x-wp-totalpages') ?? 1)) }
+    },
+    maxPages: MAX_VARIATION_WALK_PAGES,
+    onPage,
+  })
 }
 
 /**
- * One page of the store's orders, newest first. Shows every status (failed,
- * cancelled, … included) so the store manager can act on all of them; the
- * status-based exclusion rule only applies to sales totals elsewhere.
+ * Walk the customers listing (newest registrations first), folding every page
+ * into `onPage`. Customers support no `modified_after` filter, so the delta
+ * pass stops early: once a page contains no customer registered after
+ * `newerThanMs`, the walk ends (edits of old customers are picked up by the
+ * next full walk — see forceFull).
  */
-export async function listOrders(cfg: WooConfig, query: ListOrdersQuery): Promise<OrdersListResult> {
-  // Bulk print fetch: `include` pins the exact ids (≤100 per request, so chunk).
-  if (query.include && query.include.length > 0) {
-    const CHUNK = 100
-    const chunks: number[][] = []
-    for (let i = 0; i < query.include.length; i += CHUNK) chunks.push(query.include.slice(i, i + CHUNK))
-    const results = await Promise.all(
-      chunks.map(async (ids) => {
-        const { data } = await wooRequest<Order[]>(cfg, 'GET', '/orders', {
-          include: ids.join(','),
-          per_page: Math.min(100, ids.length),
-        })
-        return data
-      }),
-    )
-    const byId = new Map(results.flat().map((o) => [o.id, o]))
-    const ordered = query.include.map((id) => byId.get(id)).filter((o): o is Order => !!o)
-    const orders = await Promise.all(ordered.map(async (o) => ({ ...o, customer_name: await customerNameOf(cfg, o) })))
-    return { orders, total: orders.length, totalPages: 1, page: 1, perPage: orders.length }
-  }
-
-  const all = await fetchAllOrders(cfg)
-  return filterAndPaginateOrders(all, query)
-}
-
-/* ------------------------------------------------------------------ */
-/* Order status totals (تعداد سفارش‌های هر وضعیت)                        */
-/* ------------------------------------------------------------------ */
-
-/**
- * Order counts per status (GET /reports/orders/totals). Used for the
- * sidebar's in-progress badge and the orders-page filter chips. The trash
- * status is dropped because the orders list never shows it.
- */
-export async function listOrderStatusTotals(cfg: WooConfig): Promise<OrderStatusTotal[]> {
-  const { data } = await wooRequest<Array<{ slug?: string; name?: string; total?: string | number }>>(
-    cfg,
-    'GET',
-    '/reports/orders/totals',
-    {},
-  )
-  return (data ?? [])
-    .filter((s) => !!s.slug && s.slug !== 'trash')
-    .map((s) => ({ slug: s.slug as string, name: s.name ?? (s.slug as string), total: Number(s.total) || 0 }))
+export async function walkCustomerPages(
+  cfg: WooConfig,
+  newerThanMs: number | null,
+  onPage: (customers: Customer[]) => void,
+): Promise<{ total: number; truncated: boolean; fresh: number }> {
+  let fresh = 0
+  const res = await walkApiPages<Customer>({
+    fetchPage: async (page) => {
+      const { data, headers } = await wooRequest<Customer[]>(
+        cfg,
+        'GET',
+        '/customers',
+        { page, per_page: 100, orderby: 'registered_date', order: 'desc' },
+        undefined,
+        'v2',
+      )
+      return { items: data, totalPages: Math.max(1, Number(headers.get('x-wp-totalpages') ?? 1)) }
+    },
+    maxPages: MAX_CUSTOMER_SYNC_PAGES,
+    onPage: (items) => {
+      let pageFresh = 0
+      for (const c of items) {
+        const created = Date.parse(c.date_created_gmt ?? c.date_created)
+        if (Number.isFinite(created) && newerThanMs != null && created <= newerThanMs) continue
+        pageFresh += 1
+      }
+      fresh += pageFresh
+      onPage(items)
+      // A full page with no new registration means nothing newer behind it.
+      if (newerThanMs != null && pageFresh === 0) return false
+    },
+  })
+  return { total: res.total, truncated: res.truncated, fresh }
 }
 
 /* ------------------------------------------------------------------ */
@@ -1176,223 +673,3 @@ export async function updateOrder(cfg: WooConfig, orderId: number, payload: Orde
   return data
 }
 
-/* ------------------------------------------------------------------ */
-/* Purchase totals (مجموع خرید) — app rule, not WooCommerce's own       */
-/* ------------------------------------------------------------------ */
-
-/**
- * Which statuses count toward a customer's purchase total.
- * WooCommerce's own total_spent only counts paid orders (processing/completed);
- * this app counts every order except failed, cancelled and refunded ones.
- */
-const PURCHASE_EXCLUDED_STATUSES = new Set(['failed', 'cancelled', 'refunded'])
-
-function countsTowardPurchase(status: string | undefined | null): boolean {
-  return !!status && !PURCHASE_EXCLUDED_STATUSES.has(status)
-}
-
-const round2 = (n: number): number => Math.round(n * 100) / 100
-
-/** Safety cap: a single customer with more orders than this is treated as truncated. */
-const MAX_PURCHASE_PAGES = 20 // 20 × 100 = 2000 orders max per customer
-
-async function fetchOrdersPage(
-  cfg: WooConfig,
-  customerId: number,
-  page: number,
-): Promise<{ orders: Order[]; total: number }> {
-  const { data, headers } = await wooRequest<Order[]>(cfg, 'GET', '/orders', {
-    customer: customerId,
-    per_page: 100,
-    page,
-    orderby: 'date',
-    order: 'desc',
-  })
-  return { orders: data, total: Number(headers.get('x-wp-total') ?? data.length) }
-}
-
-/**
- * Order history of one customer (newest first, up to 100 cards) plus the exact
- * rule-based purchase sum, computed across ALL of the customer's orders (pages
- * beyond the first are fetched only to total them up).
- */
-export async function listCustomerOrders(cfg: WooConfig, customerId: number): Promise<OrdersResult> {
-  const first = await fetchOrdersPage(cfg, customerId, 1)
-  const orders = first.orders
-  const total = first.total
-
-  let purchaseSum = orders.reduce((a, o) => a + (countsTowardPurchase(o.status) ? Number(o.total) || 0 : 0), 0)
-  let page = 1
-  let lastPageWasFull = orders.length === 100
-
-  // The first page may hold exactly 100 orders with more behind it — keep
-  // walking pages until one comes back short (all orders fetched) or the cap.
-  while (lastPageWasFull && page < MAX_PURCHASE_PAGES) {
-    page += 1
-    const next = await fetchOrdersPage(cfg, customerId, page)
-    purchaseSum += next.orders.reduce(
-      (a, o) => a + (countsTowardPurchase(o.status) ? Number(o.total) || 0 : 0),
-      0,
-    )
-    lastPageWasFull = next.orders.length === 100
-  }
-  // Stopped only because the cap was reached while pages were still full → the
-  // sum is a lower bound (truncated).
-  const truncated = lastPageWasFull && page === MAX_PURCHASE_PAGES
-
-  return {
-    orders,
-    total,
-    page: 1,
-    perPage: 100,
-    purchaseSum: round2(purchaseSum),
-    purchaseSumTruncated: truncated,
-  }
-}
-
-/* Session cache + bounded concurrency for enriching the customers list and for
- * the store-wide KPIs. One per-customer order read feeds both the row's
- * مجموع خرید and the store totals, so nothing is fetched twice per session. */
-const CUST_STATS_MAX = 3000
-
-interface CustStats {
-  sum: number
-  /** Customer has at least one counted order in the current Persian month. */
-  thisMonth: boolean
-}
-
-const custStatsCache = new Map<string, CustStats>()
-
-/** Rule-based purchase sum + "bought in the current Persian month" for one customer. */
-async function customerStatsCached(cfg: WooConfig, customer: Customer): Promise<CustStats> {
-  const ordersCount = Number(customer.orders_count) || 0
-  if (ordersCount <= 0) return { sum: 0, thisMonth: false }
-  const key = cfg.siteUrl + '|' + customer.id
-  const hit = custStatsCache.get(key)
-  if (hit) return hit
-
-  const curMonth = persianMonthKey(new Date())
-  let sum = 0
-  let thisMonth = false
-  const visit = (orders: Order[]): void => {
-    for (const o of orders) {
-      if (!countsTowardPurchase(o.status)) continue
-      sum += Number(o.total) || 0
-      if (!thisMonth && persianMonthKey(new Date(o.date_created)) === curMonth) thisMonth = true
-    }
-  }
-  const first = await fetchOrdersPage(cfg, customer.id, 1)
-  visit(first.orders)
-  let page = 1
-  let full = first.orders.length === 100
-  while (full && page < MAX_PURCHASE_PAGES) {
-    page += 1
-    const next = await fetchOrdersPage(cfg, customer.id, page)
-    visit(next.orders)
-    full = next.orders.length === 100
-  }
-
-  const out: CustStats = { sum: round2(sum), thisMonth }
-  if (custStatsCache.size >= CUST_STATS_MAX) custStatsCache.delete(custStatsCache.keys().next().value as string)
-  custStatsCache.set(key, out)
-  return out
-}
-
-/** Rule-based مجموع خرید of one customer (row enrichment — shares the cache above). */
-async function purchaseSumCached(cfg: WooConfig, customer: Customer): Promise<number> {
-  return (await customerStatsCached(cfg, customer)).sum
-}
-
-/** Run tasks with at most `limit` in flight. */
-export async function mapLimit<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
-  let i = 0
-  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (i < items.length) {
-      const current = i
-      i += 1
-      await fn(items[current])
-    }
-  })
-  await Promise.all(workers)
-}
-
-/* ------------------------------------------------------------------ */
-/* Store-wide customer KPIs (مجموع خرید همهٔ مشتریان + خریداران ماه جاری) */
-/* ------------------------------------------------------------------ */
-
-const MAX_CUSTOMER_STAT_PAGES = 100 // 100 × 100 = up to 10,000 customers scanned
-const storeStatsBySite = new Map<string, { promise: Promise<StoreStats> | null; result: StoreStats | null }>()
-
-/**
- * Walks every page of customers (newest first) and, for customers that have
- * orders, reads their order history once to derive the rule-based مجموع خرید
- * and whether they bought in the current Persian month. Per-customer failures
- * are skipped (marked `partial`) so one flaky customer never kills the KPI.
- */
-async function computeStoreStats(cfg: WooConfig): Promise<StoreStats> {
-  let totalCustomers = 0
-  let sum = 0
-  let monthCustomers = 0
-  let partial = false
-  let page = 0
-  let totalPages = 1
-  for (;;) {
-    page += 1
-    const { data, headers } = await wooRequest<Customer[]>(
-      cfg,
-      'GET',
-      '/customers',
-      { page, per_page: 100, orderby: 'registered_date', order: 'desc' },
-      undefined,
-      'v2',
-    )
-    if (page === 1) totalPages = Math.max(1, Number(headers.get('x-wp-totalpages') ?? 1))
-    await mapLimit(
-      data.filter((c) => (Number(c.orders_count) || 0) > 0),
-      12,
-      async (c) => {
-        try {
-          const st = await customerStatsCached(cfg, c)
-          sum = round2(sum + st.sum)
-          if (st.thisMonth) monthCustomers += 1
-        } catch {
-          partial = true
-        }
-      },
-    )
-    totalCustomers += data.length
-    if (data.length === 0 || page >= totalPages || page >= MAX_CUSTOMER_STAT_PAGES) break
-  }
-  return {
-    totalCustomers,
-    sum: round2(sum),
-    monthCustomers,
-    partial,
-    truncated: page >= MAX_CUSTOMER_STAT_PAGES && page < totalPages,
-    computedAt: new Date().toISOString(),
-  }
-}
-
-/**
- * Store-wide customer KPIs. Computed once per session & store (then cached
- * in-memory); concurrent callers share the single running computation.
- */
-export async function getStoreStats(cfg: WooConfig): Promise<StoreStats> {
-  let entry = storeStatsBySite.get(cfg.siteUrl)
-  if (!entry) {
-    entry = { promise: null, result: null }
-    storeStatsBySite.set(cfg.siteUrl, entry)
-  }
-  if (entry.result) return entry.result
-  if (!entry.promise) {
-    entry.promise = computeStoreStats(cfg)
-      .then((r) => {
-        entry.result = r
-        return r
-      })
-      .finally(() => {
-        entry.promise = null
-      })
-  }
-  return entry.promise
-}

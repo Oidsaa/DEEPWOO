@@ -10,6 +10,8 @@ import type {
   ProductPatch,
   ProductPayload,
   Settings,
+  SyncChangeQuery,
+  SyncEntityState,
   VariationPatch,
 } from '../shared/types'
 
@@ -54,9 +56,18 @@ const api: ApiBridge = {
   listAccounts: () => ipcRenderer.invoke('accounts:list'),
   addAccount: (payload) => ipcRenderer.invoke('accounts:add', payload),
   removeAccount: (id: string) => ipcRenderer.invoke('accounts:remove', id),
-  switchAccount: (id: string) => ipcRenderer.invoke('accounts:switch', id),
+  switchAccount: (id: string, pin?: string) => ipcRenderer.invoke('accounts:switch', id, pin),
+  changeAccountPin: (id: string, current: string, next: string) =>
+    ipcRenderer.invoke('accounts:change-pin', id, current, next),
   getChangeLog: (query?: ChangeLogQuery) => ipcRenderer.invoke('log:query', query ?? {}),
+  getSyncChanges: (query?: SyncChangeQuery) => ipcRenderer.invoke('sync:changes', query ?? {}),
+  syncNow: (entity) => ipcRenderer.invoke('sync:now', entity),
   getCurrency: () => ipcRenderer.invoke('woo:currency'),
+  onSynced: (cb: (states: SyncEntityState[]) => void) => {
+    const listener = (_event: unknown, states: SyncEntityState[]) => cb(states)
+    ipcRenderer.on('data:synced', listener)
+    return () => ipcRenderer.removeListener('data:synced', listener)
+  },
 }
 
 contextBridge.exposeInMainWorld('api', api)

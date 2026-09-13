@@ -1,4 +1,5 @@
 import type { Order, OrderNote, ReceiptType } from '../../shared/types'
+import { provinceFa } from '../../shared/iran'
 import { faDate, faDigits, faNum, faTime } from './format'
 
 /** Result of building one receipt document. */
@@ -21,6 +22,8 @@ export interface ReceiptShop {
   postcode?: string
   phone?: string
   logo?: string
+  /** جملهٔ فوتر رسید فروشگاه؛ خالی = پیش‌فرض «ممنون از خرید شما — نام فروشگاه». */
+  footer?: string
   /**
    * Phrases (from «تنظیمات یادداشت سفارش») — an order note whose text contains
    * any of them is hidden on the warehouse receipt (admin AND customer notes).
@@ -48,9 +51,9 @@ export const RECEIPT_KINDS: Array<{ type: ReceiptType; fa: string; sub: string; 
 /* Order helpers shared by every receipt                               */
 /* ------------------------------------------------------------------ */
 
-/** «استان، شهر، ادامهٔ آدرس» — کدپستی عمداً در این قالب نمی‌آید. */
+/** «استان، شهر، ادامهٔ آدرس» — کدپستی عمداً در این قالب نمی‌آید؛ کد استان به نام فارسی تبدیل می‌شود. */
 function faAddress(state?: string, city?: string, rest?: string): string {
-  return [state, city, rest].map((v) => (v ?? '').trim()).filter(Boolean).join('، ')
+  return [provinceFa(state), city, rest].map((v) => (v ?? '').trim()).filter(Boolean).join('، ')
 }
 
 function deliveryAddress(order: Order) {
@@ -137,6 +140,7 @@ export function storeReceiptHtml(order: Order, shop: ReceiptShop): ReceiptDoc {
   // خرید حضوری: بدون ارسال و بدون جمع اقلام — فقط تخفیف (در صورت وجود) و جمع نهایی.
   const discWord = t.discount > 0 ? `<div class="line"><span>تخفیف</span><b class="num">−${num(t.discount)}</b></div>` : ''
   const supportWord = shop.phone ? `<div class="foot-tel num">پشتیبانی: ${faDigits(shop.phone)}</div>` : ''
+  const footWord = (shop.footer ?? '').trim() || `ممنون از خرید شما — ${shop.name || shop.domain || 'فروشگاه'}`
 
   const itemsHtml = rows
     .map((r) => {
@@ -152,12 +156,13 @@ export function storeReceiptHtml(order: Order, shop: ReceiptShop): ReceiptDoc {
 
   // No height limit on the thermal roll: budget each block conservatively so
   // long names/variations never clip — a few mm of slack is fine on a roll.
+  // 10mm blank margin on each side keeps printers with narrow printable width happy.
   const metaCount = 3 + (ship.phone ? 1 : 0)
   const headMm = (shop.logo ? 8.5 : 0) + 5.7 + 3.8 + 1.2
   const rowsMm = rows.reduce((a, r) => {
     const all = [r.name, r.meta.join('، '), r.sku].filter(Boolean).join(' — ')
-    // 80mm roll → the name column is ~37mm ≈ 15 Persian chars per line.
-    return a + 6.2 + 3.6 * Math.max(0, estLines(all, 15) - 1)
+    // 80mm roll − 2×10mm margin → name column is ~25mm ≈ 10 Persian chars per line.
+    return a + 6.2 + 3.6 * Math.max(0, estLines(all, 10) - 1)
   }, 0)
   const totalsRows = 1 + (discWord ? 1 : 0)
   const totalsMm = totalsRows * 3.8 + Math.max(0, totalsRows - 1) * 1.1 + 4.6 + 1.2
@@ -196,12 +201,12 @@ export function storeReceiptHtml(order: Order, shop: ReceiptShop): ReceiptDoc {
     </div>
     <hr class="dash"/>
     <div class="foot">
-      <div>ممنون از خرید شما — ${esc(shop.name || shop.domain)}</div>
+      <div>${esc(footWord)}</div>
       ${supportWord}
     </div>
   </div>
   <style>
-    .sheet.store { padding: 3mm 3.2mm 2.6mm; font-size: 9.2px; color:#000; }
+    .sheet.store { padding: 3mm 10mm 2.6mm; font-size: 9.2px; color:#000; }
     .sheet.store .store-head { text-align: center; }
     .store-head .shop-logo { max-height: 11mm; max-width: 50mm; object-fit: contain; margin-bottom: 0.8mm; }
     .store-head .shop { font-size: 13.5px; font-weight: 800; }
@@ -250,9 +255,8 @@ export function postalReceiptHtml(order: Order, shop: ReceiptShop): ReceiptDoc {
   <div class="sheet postal">
     <div class="air">
       <div class="air-in">
-        <div class="h-label">گیرنده</div>
+        <div class="h-label">گیرنده<span class="sep">|</span><span class="num h-ord">${faDigits(order.number)}</span></div>
         <div class="h-line">
-          <span class="num h-code">${faDigits(order.number)}</span><span class="sep">|</span>
           <b class="h-name">${esc(ship.name)}</b>${recvPhone}
         </div>
         <div class="h-addr">${esc(addrFull || '—')}</div>
@@ -269,21 +273,21 @@ export function postalReceiptHtml(order: Order, shop: ReceiptShop): ReceiptDoc {
     </div>
   </div>
   <style>
-    .sheet.postal { display: flex; gap: 2mm; padding: 2.4mm 3mm; font-size: 9px; color: #000; }
+    .sheet.postal { display: flex; gap: 2mm; padding: 2.4mm 10mm; font-size: 11px; color: #000; }
     /* کادر راه‌راه: آبی ← سفید ← قرمز ← سفید، و همین لوپ تکرار می‌شود. */
     .air { flex: 1 1 0; min-width: 0; padding: 1.3mm;
       background: repeating-linear-gradient(45deg, #1e50c0 0 2.3mm, #fff 2.3mm 4.6mm, #b91c1c 4.6mm 6.9mm, #fff 6.9mm 9.2mm); }
     .air-in { background: #fff; height: 100%; box-sizing: border-box; padding: 1.7mm 2.4mm;
       display: flex; flex-direction: column; justify-content: center; gap: 0.5mm; text-align: right; }
-    .h-label { font-size: 10px; font-weight: 900; margin-bottom: 0.4mm; }
+    .h-label { font-size: 13px; font-weight: 900; margin-bottom: 0.4mm; }
     .h-line { line-height: 1.45; white-space: nowrap; }
-    .h-code { font-weight: 800; font-size: 10.5px; }
-    .h-name { font-size: 13px; font-weight: 900; margin: 0 0.4mm; }
-    .h-phone { font-size: 9px; color: #222; }
+    .h-ord { font-size: 12.5px; font-weight: 400; color: #222; }
+    .h-name { font-size: 15px; font-weight: 900; margin: 0 0.4mm; }
+    .h-phone { font-size: 11px; color: #222; }
     .sep { color: #9aa0a6; margin: 0 0.8mm; }
-    .h-addr { font-size: 8.8px; line-height: 1.55; color: #111; }
-    .h-post { font-size: 9.3px; font-weight: 700; margin-top: 0.3mm; }
-    .s-name { font-size: 12px; }
+    .h-addr { font-size: 10.8px; line-height: 1.55; color: #111; font-weight: 700; }
+    .h-post { font-size: 11.3px; font-weight: 700; margin-top: 0.3mm; }
+    .s-name { font-size: 14px; }
   </style>`
 
   return { type: 'postal', html: pageHtml(w, h, true, body), widthMm: w, heightMm: h, landscape: true, itemCount: rows.length }
@@ -369,14 +373,14 @@ export function warehouseReceiptHtml(order: Order, shop: ReceiptShop, notes: Ord
   let extra = 0
   if (rows.length > 2) extra += (rows.length - 2) * 5.8
   for (const r of rows) {
-    const nmLines = estLines(`${r.name}${r.meta.length ? ' — ' + r.meta.join('، ') : ''}`, 26)
+    const nmLines = estLines(`${r.name}${r.meta.length ? ' — ' + r.meta.join('، ') : ''}`, 21)
     if (nmLines > 1) extra += (nmLines - 1) * 3.4
   }
-  const addrLines = estLines(addrFull, 26)
+  const addrLines = estLines(addrFull, 22)
   if (addrLines > 1) extra += (addrLines - 1) * 3.5
   if (ship.postcode) extra += 3.3
   const noteExtra = (list: OrderNote[]): number =>
-    list.length ? 4.2 + list.reduce((a, n) => a + 4.2 + estLines(n.note, 30) * 3.5, 0) : 0
+    list.length ? 4.2 + list.reduce((a, n) => a + 4.2 + estLines(n.note, 25) * 3.5, 0) : 0
   extra += noteExtra(adminNotes) + noteExtra(customerNotes)
   const h = mm(Math.max(42, 42 + extra + 1))
 
@@ -428,7 +432,7 @@ export function warehouseReceiptHtml(order: Order, shop: ReceiptShop, notes: Ord
     </div>
   </div>
   <style>
-    .sheet.wh { display: flex; flex-direction: column; padding: 2.6mm 3.2mm 2.2mm; font-size: 9.4px; color: #000; }
+    .sheet.wh { display: flex; flex-direction: column; padding: 2.6mm 10mm 2.2mm; font-size: 9.4px; color: #000; }
     .wh-top { display: flex; align-items: baseline; justify-content: space-between; border-bottom: 1.6px solid #000; padding-bottom: 0.7mm; }
     .wh-title { font-size: 13.5px; font-weight: 900; }
     .wh-order b { font-size: 11.5px; }
@@ -495,6 +499,22 @@ const A4W = 210
 const A4H = 297
 const fmtD = (n: number): string => n.toFixed(2)
 
+/** The receipt's sheet markup (body content without its <style> block). */
+export function sheetBodyOf(html: string): string {
+  const m = html.match(/<body>([\s\S]*?)<\/body>/)
+  const inner = m ? m[1] : ''
+  const idx = inner.indexOf('<style>')
+  return idx >= 0 ? inner.slice(0, idx) : inner
+}
+
+/** The receipt's inner <style> block (kind CSS) — reused by bulk + measuring. */
+export function sheetInnerOf(html: string): string {
+  const m = html.match(/<body>([\s\S]*?)<\/body>/)
+  const inner = m ? m[1] : ''
+  const idx = inner.indexOf('<style>')
+  return idx >= 0 ? inner.slice(idx) : ''
+}
+
 /**
  * Extract the inner sheet markup + its kind CSS from a single-receipt
  * document, so bulk layouts reuse the EXACT same receipt rendering.
@@ -560,11 +580,12 @@ export function bulkStoreHtml(orders: Order[], shop: ReceiptShop): BulkReceiptDo
   }
 }
 
-const POSTAL_PER_SHEET = 7
+// ۶ برچسب در هر A4: ۱۰mm حاشیهٔ بالا + ۶×۴۲mm + ۵×۰٫۵mm فاصله = ۲۶۴٫۵mm ≤ ۲۹۷mm
+const POSTAL_PER_SHEET = 6
 
 /**
- * Bulk POSTAL — A4 portrait, exactly 7 labels per sheet.
- * 7 × 42mm + 6 × 0.5mm gaps = 297mm = one full A4.
+ * Bulk POSTAL — A4 portrait, 6 labels per sheet with a 10mm blank strip at the
+ * top so printers with a large dead zone never clip the first label.
  */
 export function bulkPostalHtml(orders: Order[], shop: ReceiptShop): BulkReceiptDoc {
   const pages: string[] = []
@@ -572,11 +593,11 @@ export function bulkPostalHtml(orders: Order[], shop: ReceiptShop): BulkReceiptD
     const slice = orders.slice(i, i + POSTAL_PER_SHEET)
     const cells = slice.map((o) => `<div class="cell">${sheetOf(postalReceiptHtml(o, shop)).body}</div>`).join('')
     pages.push(
-      `<div class="pg">
+      `<div class="pg postal-a4">
         <style>
-          .pg.postal-a4 { display: flex; flex-direction: column; justify-content: center; gap: 0.5mm; }
-          .pg .cell { width: ${A4W}mm; height: 42mm; overflow: hidden; }
-          .pg .cell .sheet.postal { width: ${A4W}mm; height: 42mm; }
+          .pg.postal-a4 { display: flex; flex-direction: column; justify-content: flex-start; gap: 0.5mm; padding-top: 10mm; }
+          .pg.postal-a4 .cell { width: ${A4W}mm; height: 42mm; overflow: hidden; }
+          .pg.postal-a4 .cell .sheet.postal { width: ${A4W}mm; height: 42mm; }
         </style>
         ${cells}
       </div>`,
@@ -605,28 +626,33 @@ export function bulkWarehouseHtml(
   orders: Order[],
   shop: ReceiptShop,
   notesOf: (orderId: number) => OrderNote[],
+  exactHeights?: Map<number, number>,
 ): BulkReceiptDoc {
   const GAP_X = 10 // 2 × 100mm columns + 10mm gutter = 210mm A4 width
   // فاصلهٔ عمودی بین سطرها: ۳ میلی‌متر بود؛ با احتساب پدینگ داخلی برچسب‌ها
   // (~۵ میلی‌متر) نوار سفید دیده‌شده ≈ ۰٫۸ سانتی‌متر بود → حالا ≈ ۰٫۶ سانتی‌متر.
   const GAP_Y = 1.5
+  const PAGE_TOP = 10 // نوار خالی بالای هر برگهٔ A4 — بریده‌نشدن سطر اول در چاپگر
+  const USABLE_H = A4H - PAGE_TOP
 
   // RTL pairing: first order of each pair lands in the RIGHT column.
   const pairs: Array<{ a: Order; b: Order | null; h: number }> = []
+  const labelH = (o: Order): number =>
+    exactHeights?.get(o.id) ?? warehouseReceiptHtml(o, shop, notesOf(o.id)).heightMm
   for (let i = 0; i < orders.length; i += 2) {
     const a = orders[i]
     const b = i + 1 < orders.length ? orders[i + 1] : null
-    const hA = warehouseReceiptHtml(a, shop, notesOf(a.id)).heightMm
-    const hB = b ? warehouseReceiptHtml(b, shop, notesOf(b.id)).heightMm : 0
+    const hA = labelH(a)
+    const hB = b ? labelH(b) : 0
     pairs.push({ a, b, h: mm(Math.max(hA, hB)) })
   }
 
-  // Greedy row packing into A4 sheets.
+  // Greedy row packing into A4 sheets (below the 10mm top strip).
   const sheets: Array<Array<{ a: Order; b: Order | null; h: number }>> = [[]]
   let used = 0
   for (const p of pairs) {
     const need = used === 0 ? p.h : used + GAP_Y + p.h
-    if (need > A4H && sheets[sheets.length - 1].length > 0) {
+    if (need > USABLE_H && sheets[sheets.length - 1].length > 0) {
       sheets.push([])
       used = p.h
     } else {
@@ -643,13 +669,13 @@ export function bulkWarehouseHtml(
         return `<div class="row" style="height:${fmtD(r.h)}mm">${cell(r.a)}${cell(r.b)}</div>`
       })
       .join('')
-    return `<div class="pg">
+    return `<div class="pg wh-a4">
       <style>
-        .pg.wh-a4 { display: flex; flex-direction: column; align-items: center; }
-        .pg .row { width: ${A4W - GAP_X}mm; display: grid; grid-template-columns: 1fr 1fr; column-gap: ${GAP_X}mm; }
-        .pg .row + .row { margin-top: ${GAP_Y}mm; }
-        .pg .cell { width: 100mm; overflow: hidden; }
-        .pg .cell.empty { visibility: hidden; }
+        .pg.wh-a4 { display: flex; flex-direction: column; align-items: center; padding-top: ${PAGE_TOP}mm; }
+        .pg.wh-a4 .row { width: ${A4W}mm; display: grid; grid-template-columns: 100mm 100mm; column-gap: ${GAP_X}mm; }
+        .pg.wh-a4 .row + .row { margin-top: ${GAP_Y}mm; }
+        .pg.wh-a4 .cell { width: 100mm; overflow: hidden; }
+        .pg.wh-a4 .cell.empty { visibility: hidden; }
       </style>
       ${cells}
     </div>`

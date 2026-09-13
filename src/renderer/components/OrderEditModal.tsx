@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { Order, Product, ProductVariation } from '../../shared/types'
+import { IR_PROVINCES, provinceStd } from '../../shared/iran'
 import { api } from '../api'
 import { useCurrency } from '../lib/currency'
 import { faDigits, faNum } from '../lib/format'
@@ -38,7 +39,7 @@ const toForm = (a: Partial<Order['billing']> | undefined, fb?: Partial<AddrForm>
   first_name: a?.first_name ?? fb?.first_name ?? '',
   last_name: a?.last_name ?? fb?.last_name ?? '',
   phone: a?.phone ?? fb?.phone ?? '',
-  state: a?.state ?? fb?.state ?? '',
+  state: provinceStd(a?.state ?? fb?.state ?? ''),
   city: a?.city ?? fb?.city ?? '',
   address_1: a?.address_1 ?? fb?.address_1 ?? '',
   address_2: a?.address_2 ?? fb?.address_2 ?? '',
@@ -241,7 +242,20 @@ export default function OrderEditModal({ order, onClose, onSaved }: Props) {
         <label className="lbl" htmlFor={pf + '-state'}>
           استان
         </label>
-        <input id={pf + '-state'} className="input" value={f.state} onChange={(e) => set({ ...f, state: e.target.value })} placeholder="مثلاً تهران" />
+        <select
+          id={pf + '-state'}
+          className="sel"
+          value={f.state}
+          onChange={(e) => set({ ...f, state: e.target.value })}
+        >
+          <option value="">—</option>
+          {f.state && !IR_PROVINCES.some((p) => p.code === f.state) ? <option value={f.state}>{f.state}</option> : null}
+          {IR_PROVINCES.map((p) => (
+            <option key={p.code} value={p.code}>
+              {p.fa}
+            </option>
+          ))}
+        </select>
       </div>
       <div className="field">
         <label className="lbl" htmlFor={pf + '-city'}>

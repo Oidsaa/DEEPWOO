@@ -997,6 +997,10 @@ table.tbl {
   overflow-y: auto;
 }
 
+.modal.modal-sm {
+  max-width: 380px;
+}
+
 @keyframes popIn {
   from {
     opacity: 0;
@@ -3551,10 +3555,18 @@ table.tbl {
   display: grid;
   grid-template-columns: minmax(0, 2.2fr) repeat(6, minmax(0, 1fr));
   align-items: center;
-  gap: 8px;
-  padding: 8px 6px;
+  gap: 10px;
+  padding: 10px 8px;
   border-bottom: 1px dashed var(--glass-line);
   font-size: 12px;
+}
+/* جدول عملیات (سفارش/مشتری/تاریخ/وضعیت/مبلغ) — ۵ ستون با عرض‌های متناسب */
+.rp-table.ops {
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1.6fr) minmax(0, 1.2fr) minmax(0, 1.05fr) minmax(0, 1.2fr);
+}
+/* جدول هشدار موجودی (کالا/دسته/وضعیت/موجودی/وضعیت انبار) */
+.rp-table.stock {
+  grid-template-columns: minmax(0, 2.2fr) minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, 1.2fr) minmax(0, 1fr);
 }
 .rp-table > span:not(.rp-t-cell-main) {
   text-align: center;
@@ -4088,6 +4100,21 @@ table.tbl {
   line-height: 1.5;
 }
 
+.sb-switch-ok {
+  font-size: 10.5px;
+  color: var(--green, #4ade80);
+  text-align: center;
+  padding: 0 4px 4px;
+  line-height: 1.5;
+}
+
+/* نشان قفل روی اکانت‌هایی که رمز شخصی دارند. */
+.sb-acct-lock {
+  color: var(--ink-3, #64748b);
+  margin-inline-start: auto;
+  display: inline-flex;
+}
+
 /* ---- پنل اکانت‌های کارشناس (تنظیمات) ---- */
 .acct-list {
   display: flex;
@@ -4196,18 +4223,34 @@ table.tbl {
   margin-top: 5px;
 }
 
-.dash-cards {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
+.dash-stats {
   margin-top: 14px;
+  padding: 16px 22px 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
 }
 
-.dash-card {
+.dash-stats-nums {
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 18px 22px;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 14px 48px;
+  width: 100%;
+}
+
+.dash-stat {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.dash-stat-sep {
+  width: 1px;
+  align-self: stretch;
+  background: var(--line);
 }
 
 .dash-card-ic {

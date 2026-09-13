@@ -8,7 +8,6 @@ import { applyAppearance } from '../lib/theme'
 import {
   IconAlert,
   IconCheck,
-  IconClock,
   IconDroplet,
   IconEye,
   IconEyeOff,
@@ -121,6 +120,12 @@ export default function SettingsView({ settings, conn, onSaved, onAccountsChange
   const [newLabel, setNewLabel] = useState('')
   const [newCk, setNewCk] = useState('')
   const [newCs, setNewCs] = useState('')
+  // سینک پس‌زمینه: دکمهٔ «همگام‌سازی الان» + پیام نتیجه.
+  const [syncing, setSyncing] = useState(false)
+  const [syncMsg, setSyncMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  // «بازسازی کامل داده‌ها»: تأیید دومرحله‌ای (کلیک دوم ظرف ۴ ثانیه) مثل «پاک کردن تنظیمات».
+  const [armRebuild, setArmRebuild] = useState(false)
+  const [rebuilding, setRebuilding] = useState(false)
 
   const refreshAccounts = () => {
     api
@@ -205,8 +210,53 @@ export default function SettingsView({ settings, conn, onSaved, onAccountsChange
     return () => window.clearTimeout(t)
   }, [armClear])
 
+  useEffect(() => {
+    if (!armRebuild) return
+    const t = window.setTimeout(() => setArmRebuild(false), 4000)
+    return () => window.clearTimeout(t)
+  }, [armRebuild])
+
   const set = <K extends keyof Settings>(key: K, value: Settings[K]) =>
     setForm((f) => ({ ...f, [key]: value }))
+
+  /** یک گذر سینک فوری (سفارش‌ها + محصولات + مشتریان) با گزارش نتیجه. */
+  const handleSyncNow = async () => {
+    setSyncing(true)
+    setSyncMsg(null)
+    try {
+      const states = await api.syncNow()
+      const keys = ['سفارش‌ها', 'محصولات', 'مشتریان']
+      const parts = states.map((s, i) => `${keys[i] ?? 'داده'}: ${(s.itemCount || 0).toLocaleString('fa-IR')}`)
+      setSyncMsg({ ok: true, text: 'همگام‌سازی کامل شد — ' + parts.join(' • ') })
+    } catch (e) {
+      setSyncMsg({ ok: false, text: 'همگام‌سازی ناموفق: ' + (e instanceof Error ? e.message : String(e)) })
+    } finally {
+      setSyncing(false)
+    }
+  }
+
+  /** بازسازی کامل: مخزن محلی خالی و همهٔ داده‌ها از نو از سایت پایه‌گذاری می‌شود.
+   * فقط برای رفع مغایرت — دلتا هرگز خرابیِ مخزن را کشف نمی‌کند. */
+  const handleFullRebuild = async () => {
+    if (!armRebuild) {
+      setArmRebuild(true)
+      return
+    }
+    setArmRebuild(false)
+    setRebuilding(true)
+    setSyncMsg(null)
+    try {
+      await api.clearCache()
+      setSyncMsg({
+        ok: true,
+        text: 'بازسازی کامل شروع شد — داده‌ها صفحه‌به‌صفحه از سایت می‌آیند و لیست‌ها زنده پر می‌شوند.',
+      })
+    } catch (e) {
+      setSyncMsg({ ok: false, text: 'بازسازی ناموفق: ' + (e instanceof Error ? e.message : String(e)) })
+    } finally {
+      setRebuilding(false)
+    }
+  }
 
   /* ---- ظاهر برنامه (تم + رنگ تأکیدی) با پیش‌نمایش فوری ---- */
 
@@ -700,117 +750,162 @@ export default function SettingsView({ settings, conn, onSaved, onAccountsChange
         <div className="panel" style={{ gridColumn: '1 / -1' }}>
           <div className="panel-head">
             <div>
-              <div className="panel-title">سرعت و کش داده‌ها</div>
-              <div className="panel-sub">تعادل بین تازگی داده و سرعت باز شدن منوها را خودتان تنظیم کنید</div>
+              <div className="panel-title">سینک پس‌زمینه (پایگاه دادهٔ محلی)</div>
+              <div className="panel-sub">
+                سفارش‌ها، محصولات و مشتریان روی همین دستگاه ذخیره می‌شوند و خودکار تازه می‌مانند
+              </div>
             </div>
             <div className="chip">
-              <IconClock size={13} />
-              کش WooCommerce
+              <IconRefresh size={13} />
+              سینک خودکار
             </div>
           </div>
 
           <div className="form-body">
             <div className="notice info" style={{ marginTop: 0 }}>
-              <IconClock size={17} />
+              <IconRefresh size={17} />
               <div>
-                داده‌های خوانده‌شده از فروشگاه تا این مدت‌ها کش می‌شوند؛ با هر تغییر یا «به‌روزرسانی» در برنامه، کش همان لحظه
-                پاک می‌شود. عدد بزرگ‌تر یعنی ورود به منوها سریع‌تر و درخواست کمتر به ووکامرس، ولی ممکن است داده تا همان
-                مدت قدیمی دیده شود. پس از ذخیره، کش فعلی پاک و از نو ساخته می‌شود.
+                داده‌های اصلی از پایگاه دادهٔ محلی همین دستگاه خوانده می‌شود؛ پس باز شدن منوها آنی است. سینک پس‌زمینه با
+                فاصله‌های زیر فقط تغییرات جدید را از سایت می‌گیرد و هر تغییر (جدید / بروزرسانی / تغییر وضعیت) در
+                «تغییرات فروشگاه» ثبت می‌شود.
               </div>
             </div>
 
             <div className="field">
-              <label className="lbl" htmlFor="cacheListSec">
-                نگهداری فهرست‌ها (ثانیه)
-              </label>
-              <input
-                id="cacheListSec"
-                className="input ltr"
-                type="number"
-                dir="ltr"
-                min={5}
-                max={86400}
-                inputMode="numeric"
-                placeholder="60"
-                value={String(form.cacheListSec ?? 60)}
-                onChange={(e) =>
-                  set('cacheListSec', e.target.value.trim() === '' ? undefined : Number(toLatin(e.target.value)))
-                }
-              />
-              <span className="f-hint">مشتریان، سفارش‌ها و محصولات — پیش‌فرض ۶۰</span>
-            </div>
-
-            <div className="field">
-              <label className="lbl" htmlFor="cacheDetailSec">
-                جزئیات و تاریخچه (ثانیه)
-              </label>
-              <input
-                id="cacheDetailSec"
-                className="input ltr"
-                type="number"
-                dir="ltr"
-                min={5}
-                max={86400}
-                inputMode="numeric"
-                placeholder="120"
-                value={String(form.cacheDetailSec ?? 120)}
-                onChange={(e) =>
-                  set('cacheDetailSec', e.target.value.trim() === '' ? undefined : Number(toLatin(e.target.value)))
-                }
-              />
-              <span className="f-hint">یادداشت‌ها، تاریخچهٔ سفارش مشتری/محصول و آمار فروشگاه — پیش‌فرض ۱۲۰</span>
-            </div>
-
-            <div className="field">
-              <label className="lbl" htmlFor="cacheReportSec">
-                گزارش‌های فروش (ثانیه)
-              </label>
-              <input
-                id="cacheReportSec"
-                className="input ltr"
-                type="number"
-                dir="ltr"
-                min={5}
-                max={86400}
-                inputMode="numeric"
-                placeholder="300"
-                value={String(form.cacheReportSec ?? 300)}
-                onChange={(e) =>
-                  set('cacheReportSec', e.target.value.trim() === '' ? undefined : Number(toLatin(e.target.value)))
-                }
-              />
-              <span className="f-hint">گزارشات، کاتالوگ و جزئیات محصول — پیش‌فرض ۳۰۰</span>
-            </div>
-
-            <div className="field">
-              <label className="lbl" htmlFor="cacheStaleHours">
-                سن مجاز کش در شروع دوبارهٔ برنامه (ساعت)
-              </label>
-              <input
-                id="cacheStaleHours"
-                className="input ltr"
-                type="number"
-                dir="ltr"
-                min={0}
-                max={168}
-                inputMode="numeric"
-                placeholder="12"
-                value={String(form.cacheStaleHours ?? 12)}
-                onChange={(e) =>
-                  set('cacheStaleHours', e.target.value.trim() === '' ? undefined : Number(toLatin(e.target.value)))
-                }
-              />
+              <label className="lbl">سینک خودکار در پس‌زمینه</label>
+              <div className="theme-seg">
+                <button
+                  type="button"
+                  className={'theme-opt' + ((form.autoSyncEnabled ?? true) ? ' active' : '')}
+                  onClick={() => set('autoSyncEnabled', true)}
+                >
+                  <IconCheck size={15} />
+                  روشن
+                </button>
+                <button
+                  type="button"
+                  className={'theme-opt' + (!(form.autoSyncEnabled ?? true) ? ' active' : '')}
+                  onClick={() => set('autoSyncEnabled', false)}
+                >
+                  خاموش
+                </button>
+              </div>
               <span className="f-hint">
-                پس از بستن و باز کردن برنامه، دادهٔ کش تا این چند ساعتِ گذشته همان لحظه نمایش داده و در پس‌زمینه تازه می‌شود؛
-                ۰ یعنی همیشه فقط دادهٔ کاملاً تازه — پیش‌فرض ۱۲
+                حتی وقتی خاموش است، دکمهٔ «به‌روزرسانی» هر صفحه یک گذر سینک فوری همان بخش را انجام می‌دهد.
               </span>
             </div>
 
+            <div className="appear-grid">
+              <div className="field">
+                <label className="lbl" htmlFor="syncOrdersMin">
+                  فاصلهٔ سینک سفارش‌ها (دقیقه)
+                </label>
+                <input
+                  id="syncOrdersMin"
+                  className="input ltr"
+                  type="number"
+                  dir="ltr"
+                  min={1}
+                  max={1440}
+                  inputMode="numeric"
+                  placeholder="2"
+                  value={String(form.syncOrdersMin ?? 2)}
+                  onChange={(e) =>
+                    set('syncOrdersMin', e.target.value.trim() === '' ? undefined : Number(toLatin(e.target.value)))
+                  }
+                />
+                <span className="f-hint">پیش‌فرض ۲ دقیقه</span>
+              </div>
+
+              <div className="field">
+                <label className="lbl" htmlFor="syncProductsMin">
+                  فاصلهٔ سینک محصولات (دقیقه)
+                </label>
+                <input
+                  id="syncProductsMin"
+                  className="input ltr"
+                  type="number"
+                  dir="ltr"
+                  min={5}
+                  max={1440}
+                  inputMode="numeric"
+                  placeholder="60"
+                  value={String(form.syncProductsMin ?? 60)}
+                  onChange={(e) =>
+                    set('syncProductsMin', e.target.value.trim() === '' ? undefined : Number(toLatin(e.target.value)))
+                  }
+                />
+                <span className="f-hint">پیش‌فرض ۶۰ دقیقه</span>
+              </div>
+
+              <div className="field">
+                <label className="lbl" htmlFor="syncCustomersMin">
+                  فاصلهٔ سینک مشتریان (دقیقه)
+                </label>
+                <input
+                  id="syncCustomersMin"
+                  className="input ltr"
+                  type="number"
+                  dir="ltr"
+                  min={15}
+                  max={1440}
+                  inputMode="numeric"
+                  placeholder="240"
+                  value={String(form.syncCustomersMin ?? 240)}
+                  onChange={(e) =>
+                    set('syncCustomersMin', e.target.value.trim() === '' ? undefined : Number(toLatin(e.target.value)))
+                  }
+                />
+                <span className="f-hint">پیش‌فرض ۲۴۰ دقیقه</span>
+              </div>
+
+              <div className="field">
+                <label className="lbl" htmlFor="cacheDetailSec">
+                  جزئیات و تاریخچه (ثانیه)
+                </label>
+                <input
+                  id="cacheDetailSec"
+                  className="input ltr"
+                  type="number"
+                  dir="ltr"
+                  min={5}
+                  max={86400}
+                  inputMode="numeric"
+                  placeholder="120"
+                  value={String(form.cacheDetailSec ?? 120)}
+                  onChange={(e) =>
+                    set('cacheDetailSec', e.target.value.trim() === '' ? undefined : Number(toLatin(e.target.value)))
+                  }
+                />
+                <span className="f-hint">تازگی کش کوپن‌ها و یادداشت‌های سفارش — پیش‌فرض ۱۲۰ ثانیه</span>
+              </div>
+            </div>
+
             <div className="form-actions">
+              <button type="button" className="btn btn-ghost" onClick={handleSyncNow} disabled={syncing}>
+                {syncing ? <IconRefresh size={16} className="spin" /> : <IconRefresh size={16} />}
+                {syncing ? 'در حال همگام‌سازی…' : 'همگام‌سازی الان'}
+              </button>
               <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving}>
                 {saving ? <IconRefresh size={16} className="spin" /> : <IconCheck size={16} />}
-                {saving ? 'در حال ذخیره…' : 'ذخیره تنظیمات کش'}
+                {saving ? 'در حال ذخیره…' : 'ذخیره تنظیمات سینک'}
               </button>
+              <button
+                type="button"
+                className={'btn btn-sm ' + (armRebuild ? 'btn-danger-ghost' : 'btn-ghost')}
+                onClick={handleFullRebuild}
+                disabled={rebuilding}
+                title="مخزن محلی خالی و همهٔ داده‌ها از نو از سایت دانلود می‌شود — فقط برای رفع مغایرت"
+              >
+                <IconAlert size={14} />
+                {armRebuild ? 'برای تأیید دوباره کلیک کنید' : 'بازسازی کامل داده‌ها'}
+              </button>
+              {syncMsg && (
+                <span className="save-msg">
+                  {syncMsg.ok && <IconCheck size={14} />}
+                  {syncMsg.text}
+                </span>
+              )}
               {savedFlash && (
                 <span className="save-msg">
                   <IconCheck size={14} />
@@ -1022,6 +1117,24 @@ export default function SettingsView({ settings, conn, onSaved, onAccountsChange
                 value={form.storePhone ?? ''}
                 onChange={(e) => set('storePhone', e.target.value)}
               />
+            </div>
+
+            <div className="field">
+              <label className="lbl" htmlFor="receiptFooter">
+                جملهٔ فوتر رسید فروشگاه
+              </label>
+              <input
+                id="receiptFooter"
+                className="input"
+                type="text"
+                autoComplete="off"
+                placeholder="ممنون از خرید شما"
+                value={form.receiptFooter ?? ''}
+                onChange={(e) => set('receiptFooter', e.target.value)}
+              />
+              <span className="f-hint">
+                پایین رسید فروشگاه چاپ می‌شود؛ خالی بگذارید تا «ممنون از خرید شما — نام فروشگاه» چاپ شود.
+              </span>
             </div>
 
             <div className="form-actions">

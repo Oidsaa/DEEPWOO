@@ -4,6 +4,7 @@ import type { ConnState, Product, ProductsResult } from '../../shared/types'
 import { api, isMock } from '../api'
 import { avatarPalette, faDigits, faNum, faTime } from '../lib/format'
 import { useCurrency } from '../lib/currency'
+import { useSyncRefresh } from '../lib/liveSync'
 import { forceRefresh, reloadView } from '../lib/refresh'
 import { lastStoreSync } from '../lib/syncStamp'
 import AddProductModal from './AddProductModal'
@@ -104,6 +105,10 @@ export default function ProductsView({ configured, conn, storeName, onGoSettings
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [loadCount, setLoadCount] = useState(0)
+  /** گذر سینک دستیِ «به‌روزرسانی» در جریان است — آیکن دکمه می‌چرخد و دکمه قفل است. */
+  const [syncing, setSyncing] = useState(false)
+  /** Bumps on every background sync pass / progress ping — live lists. */
+  const syncBump = useSyncRefresh()
   const [syncedAt, setSyncedAt] = useState<Date | null>(null)
   const debounceRef = useRef<number | undefined>(undefined)
   const [showAddModal, setShowAddModal] = useState(false)
@@ -129,7 +134,8 @@ export default function ProductsView({ configured, conn, storeName, onGoSettings
       return
     }
     let cancelled = false
-    setLoading(true)
+    // Silent refetch on sync pings once rows exist — no spinner flash.
+    if (!data) setLoading(true)
     setError(null)
     api
       .listProducts({
@@ -159,7 +165,7 @@ export default function ProductsView({ configured, conn, storeName, onGoSettings
     return () => {
       cancelled = true
     }
-  }, [configured, params.search, params.status, params.stockStatus, params.page, params.perPage, loadCount])
+  }, [configured, params.search, params.status, params.stockStatus, params.page, params.perPage, loadCount, syncBump])
 
   const handleCreated = (name: string) => {
     setShowAddModal(false)
@@ -167,7 +173,7 @@ export default function ProductsView({ configured, conn, storeName, onGoSettings
     setSearchInput('')
     window.clearTimeout(debounceRef.current)
     setParams((p) => ({ ...p, search: '', page: 1 }))
-    forceRefresh(setLoadCount)
+    forceRefresh('products', setLoadCount, setSyncing)
   }
 
   const onSearchChange = (value: string) => {
@@ -223,7 +229,13 @@ export default function ProductsView({ configured, conn, storeName, onGoSettings
         <div className="notice err">
           <IconAlert size={17} />
           <div style={{ flex: 1 }}>{conn.message}</div>
-          <button type="button" className="btn btn-sm btn-ghost" onClick={() => forceRefresh(setLoadCount)}>
+          <button
+            type="button"
+            className="btn btn-sm btn-ghost"
+            disabled={syncing}
+            onClick={() => forceRefresh('products', setLoadCount, setSyncing)}
+          >
+            {syncing && <IconRefresh size={14} className="spin" />}
             تلاش دوباره
           </button>
         </div>
@@ -354,10 +366,11 @@ export default function ProductsView({ configured, conn, storeName, onGoSettings
                 <button
                   type="button"
                   className="btn-icon"
-                  title="بارگذاری مجدد"
-                  onClick={() => forceRefresh(setLoadCount)}
+                  title={syncing ? 'در حال به‌روزرسانی از فروشگاه…' : 'بارگذاری مجدد'}
+                  disabled={syncing}
+                  onClick={() => forceRefresh('products', setLoadCount, setSyncing)}
                 >
-                  <IconRefresh size={15} className={loading ? 'spin' : ''} />
+                  <IconRefresh size={15} className={loading || syncing ? 'spin' : ''} />
                 </button>
               </div>
             </div>
@@ -370,8 +383,13 @@ export default function ProductsView({ configured, conn, storeName, onGoSettings
                 <div className="empty-title">دریافت محصولات ناموفق بود</div>
                 <div className="empty-sub">{error}</div>
                 <div className="empty-action">
-                  <button type="button" className="btn btn-ghost" onClick={() => forceRefresh(setLoadCount)}>
-                    <IconRefresh size={15} />
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    disabled={syncing}
+                    onClick={() => forceRefresh('products', setLoadCount, setSyncing)}
+                  >
+                    <IconRefresh size={15} className={syncing ? 'spin' : ''} />
                     تلاش دوباره
                   </button>
                 </div>
@@ -482,7 +500,7 @@ export default function ProductsView({ configured, conn, storeName, onGoSettings
           productId={detailProduct.id}
           productName={detailProduct.name}
           onClose={() => setDetailProduct(null)}
-          onChanged={() => forceRefresh(setLoadCount)}
+          onChanged={() => forceRefresh('products', setLoadCount, setSyncing)}
         />
       )}
 
@@ -494,7 +512,7 @@ export default function ProductsView({ configured, conn, storeName, onGoSettings
         <BulkPriceModal
           product={bulkPriceProduct}
           onClose={() => setBulkPriceProduct(null)}
-          onChanged={() => forceRefresh(setLoadCount)}
+          onChanged={() => forceRefresh('products', setLoadCount, setSyncing)}
         />
       )}
 
@@ -502,7 +520,7 @@ export default function ProductsView({ configured, conn, storeName, onGoSettings
         <BulkStockModal
           product={bulkStockProduct}
           onClose={() => setBulkStockProduct(null)}
-          onChanged={() => forceRefresh(setLoadCount)}
+          onChanged={() => forceRefresh('products', setLoadCount, setSyncing)}
         />
       )}
 

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { FormEvent } from 'react'
 import type { Order, OrderNote } from '../../shared/types'
+import { provinceFa } from '../../shared/iran'
 import { api } from '../api'
 import { faDate, faDigits, faNum, faTime, orderStatusMeta } from '../lib/format'
 import { useCurrency } from '../lib/currency'
@@ -250,7 +251,7 @@ export default function OrderDetailModal({ order, onClose }: Props) {
                   {addr.address_2 ? `، ${addr.address_2}` : ''}
                 </div>
                 <div className="od-addr-sub">
-                  {[addr.state, addr.city].filter(Boolean).join('، ') || '—'}
+                  {[provinceFa(addr.state), addr.city].filter(Boolean).join('، ') || '—'}
                   {addr.postcode ? ` — کدپستی ${faDigits(addr.postcode)}` : ''}
                 </div>
               </div>

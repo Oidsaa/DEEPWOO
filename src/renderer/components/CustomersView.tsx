@@ -4,6 +4,7 @@ import type { ConnState, Customer, CustomersResult, StoreStats } from '../../sha
 import { api, isMock } from '../api'
 import { avatarPalette, faDate, faDigits, faNum, faTime } from '../lib/format'
 import { useCurrency } from '../lib/currency'
+import { useSyncRefresh } from '../lib/liveSync'
 import { forceRefresh } from '../lib/refresh'
 import { lastStoreSync } from '../lib/syncStamp'
 import AddCustomerModal from './AddCustomerModal'
@@ -47,6 +48,10 @@ export default function CustomersView({ configured, conn, storeName, onGoSetting
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [loadCount, setLoadCount] = useState(0)
+  /** گذر سینک دستیِ «به‌روزرسانی» در جریان است — آیکن دکمه می‌چرخد و دکمه قفل است. */
+  const [syncing, setSyncing] = useState(false)
+  /** Bumps on every background sync pass / progress ping — live lists. */
+  const syncBump = useSyncRefresh()
   const [syncedAt, setSyncedAt] = useState<Date | null>(null)
   const [showAddModal, setShowAddModal] = useState(false)
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null)
@@ -70,7 +75,7 @@ export default function CustomersView({ configured, conn, storeName, onGoSetting
     setSearchInput('')
     window.clearTimeout(debounceRef.current)
     setParams((p) => ({ ...p, search: '', page: 1 }))
-    forceRefresh(setLoadCount)
+    forceRefresh('customers', setLoadCount, setSyncing)
   }
 
   useEffect(() => {
@@ -80,7 +85,8 @@ export default function CustomersView({ configured, conn, storeName, onGoSetting
       return
     }
     let cancelled = false
-    setLoading(true)
+    // Silent refetch on sync pings once rows exist — no spinner flash.
+    if (!data) setLoading(true)
     setError(null)
     api
       .listCustomers({ search: params.search, page: params.page, perPage: params.perPage })
@@ -104,7 +110,7 @@ export default function CustomersView({ configured, conn, storeName, onGoSetting
     return () => {
       cancelled = true
     }
-  }, [configured, params.search, params.page, params.perPage, loadCount])
+  }, [configured, params.search, params.page, params.perPage, loadCount, syncBump])
 
   const onSearchChange = (value: string) => {
     setSearchInput(value)
@@ -142,7 +148,7 @@ export default function CustomersView({ configured, conn, storeName, onGoSetting
     return () => {
       cancelled = true
     }
-  }, [configured])
+  }, [configured, syncBump])
 
   const kpiVal = (v: number | undefined): string =>
     v !== undefined && v !== null
@@ -184,7 +190,13 @@ export default function CustomersView({ configured, conn, storeName, onGoSetting
         <div className="notice err">
           <IconAlert size={17} />
           <div style={{ flex: 1 }}>{conn.message}</div>
-          <button type="button" className="btn btn-sm btn-ghost" onClick={() => forceRefresh(setLoadCount)}>
+          <button
+            type="button"
+            className="btn btn-sm btn-ghost"
+            disabled={syncing}
+            onClick={() => forceRefresh('customers', setLoadCount, setSyncing)}
+          >
+            {syncing && <IconRefresh size={14} className="spin" />}
             تلاش دوباره
           </button>
         </div>
@@ -285,11 +297,12 @@ export default function CustomersView({ configured, conn, storeName, onGoSetting
                 </div>
                 <button
                   type="button"
-                  className={'btn-icon' + (loading ? '' : '')}
-                  title="بارگذاری مجدد"
-                  onClick={() => forceRefresh(setLoadCount)}
+                  className="btn-icon"
+                  title={syncing ? 'در حال به‌روزرسانی از فروشگاه…' : 'بارگذاری مجدد'}
+                  disabled={syncing}
+                  onClick={() => forceRefresh('customers', setLoadCount, setSyncing)}
                 >
-                  <IconRefresh size={15} className={loading ? 'spin' : ''} />
+                  <IconRefresh size={15} className={loading || syncing ? 'spin' : ''} />
                 </button>
               </div>
             </div>
@@ -302,8 +315,13 @@ export default function CustomersView({ configured, conn, storeName, onGoSetting
                 <div className="empty-title">دریافت مشتریان ناموفق بود</div>
                 <div className="empty-sub">{error}</div>
                 <div className="empty-action">
-                  <button type="button" className="btn btn-ghost" onClick={() => forceRefresh(setLoadCount)}>
-                    <IconRefresh size={15} />
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    disabled={syncing}
+                    onClick={() => forceRefresh('customers', setLoadCount, setSyncing)}
+                  >
+                    <IconRefresh size={15} className={syncing ? 'spin' : ''} />
                     تلاش دوباره
                   </button>
                 </div>

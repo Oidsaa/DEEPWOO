@@ -8,6 +8,8 @@ export interface Settings {
   storeAddress?: string
   storePostcode?: string
   storePhone?: string
+  /** جملهٔ پایانی (فوتر) رسید فروشگاه؛ خالی = متن پیش‌فرض «ممنون از خرید شما — نام فروشگاه». */
+  receiptFooter?: string
   /** Store logo as a data URL (read from a local image file). Also shown at the top of the sidebar. */
   storeLogo?: string
   /** رنگ‌بندی برنامه: «dark» پیش‌فرض است؛ «light» تم روشن مینیمال. */
@@ -71,6 +73,17 @@ export interface Settings {
    * before re-fetching — 0 disables stale serving entirely (strict). Default 12.
    */
   cacheStaleHours?: number
+  /**
+   * همگام‌سازی خودکار پس‌زمینه (مثل WooDesktop): SQLite محلی با تایمرِ هر
+   * موجودیت تازه می‌شود، مستقل از نمای باز. Default true.
+   */
+  autoSyncEnabled?: boolean
+  /** فاصلهٔ سینک خودکار سفارش‌ها (دقیقه). Default 2. */
+  syncOrdersMin?: number
+  /** فاصلهٔ سینک خودکار محصولات (دقیقه). Default 60. */
+  syncProductsMin?: number
+  /** فاصلهٔ سینک خودکار مشتریان (دقیقه). Default 240. */
+  syncCustomersMin?: number
 }
 
 /** Cache usage stats surfaced to the UI (see the «آخرین همگام‌سازی» badge). */
@@ -90,6 +103,56 @@ export interface CacheStatus {
    * was really fetched from the store (ms epoch). Empty in the browser demo.
    */
   syncedAt: Record<string, number>
+  /** وضعیت سینک خودکار هر موجودیت (SQLite محلی). Empty in the browser demo. */
+  entities?: Record<string, SyncEntityState>
+}
+
+/** وضعیت سینک یک موجودیت (سفارش‌ها/محصولات/مشتریان) در دیتابیس محلی. */
+export interface SyncEntityState {
+  /** ISO time of the last successful sync (null = هرگز سینک نشده). */
+  lastSyncAt: string | null
+  /** آخرین خطای سینک (null = بدون خطا). */
+  lastError: string | null
+  /** تعداد ردیف‌های ذخیره‌شدهٔ این موجودیت در SQLite. */
+  itemCount: number
+  /** true وقتی سینک پایه به سقف صفحه خورد و کاتالوگ کامل نیست. */
+  truncated: boolean
+  /** true وقتی سینک این موجودیت همین حالا در جریان است. */
+  running: boolean
+}
+
+/** نوع تغییری که هنگام سینک برای یک موجودیت از سایت تشخیص داده می‌شود. */
+export type SyncChangeType = 'created' | 'updated' | 'status_changed'
+
+/** یک ردیف از «تغییرات فروشگاه» — تغییرات تشخیص‌داده‌شده هنگام سینک. */
+export interface SyncChangeEntry {
+  id: number
+  /** products | customers | orders */
+  entity: 'products' | 'customers' | 'orders'
+  entityId: number
+  changeType: SyncChangeType
+  /** خلاصهٔ فارسی ردیف (مثل «سفارش جدید: #1024»). */
+  summary: string
+  /** توضیح اضافه (مثل وضعیت قبلی → جدید). */
+  details: string
+  /** ms epoch of the change detection time. */
+  ts: number
+}
+
+export interface SyncChangeQuery {
+  page?: number
+  perPage?: number
+  /** فقط موجودیت خاص (خالی = همه). */
+  entity?: 'products' | 'customers' | 'orders' | ''
+  /** فقط نوع تغییر خاص (خالی = همه). */
+  changeType?: SyncChangeType | ''
+}
+
+export interface SyncChangeResult {
+  entries: SyncChangeEntry[]
+  total: number
+  page: number
+  perPage: number
 }
 
 /** Minimal shape of a WooCommerce customer (/wp-json/wc/v3/customers). */
@@ -105,6 +168,10 @@ export interface Customer {
   orders_count: number
   total_spent: string
   date_created: string
+  /** GMT creation stamp — customers have no modified_after filter; delta syncs compare this. */
+  date_created_gmt?: string
+  /** GMT modification stamp — drives the incremental (modified_after) sync. */
+  date_modified_gmt?: string
   billing: {
     first_name?: string
     last_name?: string
@@ -214,6 +281,8 @@ export interface ProductVariation {
   manage_stock: boolean
   attributes: Array<{ id: number; name: string; option: string }>
   image: { id: number; src: string; name: string } | null
+  /** GMT modification stamp — upserts compare it against the stored row. */
+  date_modified_gmt?: string
   /** Raw site meta of the combination (drives the per-warehouse stock `_stock_{id}`). */
   meta_data?: Array<{ id?: number; key: string; value: unknown }>
   /** Per-warehouse stock parsed from the `_stock_{id}` metas (absent = ثبت‌نشده). */
@@ -282,6 +351,8 @@ export interface Order {
   number: string
   status: string
   date_created: string
+  /** GMT creation stamp (also stored as a column of the local SQLite store). */
+  date_created_gmt?: string
   date_modified?: string
   /** GMT modification stamp — drives the incremental (modified_after) sync. */
   date_modified_gmt?: string
@@ -720,6 +791,11 @@ export interface ApiBridge {
    * انبارها و نشان‌های سایدبار خودکار تازه می‌شوند. Returns the unsubscribe fn.
    */
   onStockChanged(cb: () => void): () => void
+  /**
+   * بعد از هر گذر سینکِ موفق (پس‌زمینه یا دستی) وضعیت همهٔ موجودیت‌ها به همهٔ
+   * پنجره‌ها فرستاده می‌شود — نماها می‌توانند خودشان را تازه کنند.
+   */
+  onSynced(cb: (states: SyncEntityState[]) => void): () => void
   /** اکانت‌های کارشناس (کلیدهای API) ثبت‌شده روی این دستگاه + اکانت فعال. */
   listAccounts(): Promise<AccountsSnapshot>
   /** افزودن اکانت کارشناس: کلید اعتبارسنجی و (با نام صاحبش) به فهرست اضافه می‌شود. */
@@ -727,9 +803,18 @@ export interface ApiBridge {
   /** حذف اکانت؛ اگر فعال حذف شود، اولین اکانت باقی‌مانده فعال می‌شود. */
   removeAccount(id: string): Promise<AccountsSnapshot>
   /** سوئیچ به اکانت دیگر: کلید فعال عوض، کش باطل و نام کارشناس تازه می‌شود. */
-  switchAccount(id: string): Promise<{ ok: boolean; userName?: string | null; message?: string }>
+  switchAccount(
+    id: string,
+    pin?: string,
+  ): Promise<{ ok: boolean; userName?: string | null; message?: string; needPin?: boolean; hasPin?: boolean }>
+  /** تعیین/تغییر رمز شخصی اکانت — اگر رمزی هست، «current» باید درست باشد. */
+  changeAccountPin(id: string, current: string, next: string): Promise<{ ok: boolean; message?: string }>
   /** لاگ تغییرات: paged/filtered record of every write action performed in the app. */
   getChangeLog(query?: ChangeLogQuery): Promise<ChangeLogResult>
+  /** «تغییرات فروشگاه»: ردیف‌های تشخیص‌داده‌شدهٔ سینک (SQLite محلی). */
+  getSyncChanges(query?: SyncChangeQuery): Promise<SyncChangeResult>
+  /** سینک فوری یک موجودیت (یا همه) — دکمهٔ همگام‌سازی؛ نتیجهٔ هر موجودیت. */
+  syncNow(entity?: 'orders' | 'products' | 'customers'): Promise<SyncEntityState[]>
   /** Store currency label read from the WooCommerce API (واحد پولی قیمت‌ها). */
   getCurrency(): Promise<string>
 }
@@ -747,6 +832,8 @@ export interface StaffAccount {
   label: string
   consumerKey: string
   consumerSecret: string
+  /** فقط در snapshot: آیا برای ورود به این اکانت رمز شخصی تعیین شده است؟ */
+  hasPin?: boolean
 }
 
 /** Amounts for one sales-report slice (payments / statuses). */

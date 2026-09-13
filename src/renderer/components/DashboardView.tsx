@@ -116,20 +116,79 @@ function occasionOf(d: Date): string | null {
   }
 }
 
-/**Page through the user's own order-create entries and total their amounts. */
-async function sumMyOrders(user: string): Promise<{ count: number; sum: number; error: string | null }> {
+/** کلید «سال/ماه» شمسی یک تاریخ — مبنای مرز ماه‌ها. */
+const jalYmFmt = new Intl.DateTimeFormat('en-u-ca-persian', { year: 'numeric', month: 'numeric' })
+const jalMonthFmt = new Intl.DateTimeFormat('fa-IR', { month: 'long' })
+
+function jalYmKey(d: Date): string {
+  const p = jalYmFmt.formatToParts(d)
+  return (p.find((x) => x.type === 'year')?.value ?? '') + '/' + (p.find((x) => x.type === 'month')?.value ?? '')
+}
+
+/** نیمه‌شب محلی روز اولِ ماه شمسیِ d — روزبه‌روز به عقب تا کلید ماه عوض شود. */
+function monthStartOf(d: Date): Date {
+  const key = jalYmKey(d)
+  let day = new Date(d.getFullYear(), d.getMonth(), d.getDate())
+  for (let i = 0; i < 40; i++) {
+    const prev = new Date(day.getFullYear(), day.getMonth(), day.getDate() - 1)
+    if (jalYmKey(prev) !== key) return day
+    day = prev
+  }
+  return day
+}
+
+/** سه ماه اخیر شمسی (جاری + دو ماه قبل) — بازهٔ [startMs, endMs) محلی. */
+function recentJalaliMonths(nowD: Date): Array<{ label: string; startMs: number; endMs: number }> {
+  const starts: Date[] = []
+  let cursor = monthStartOf(nowD)
+  for (let i = 0; i < 3; i++) {
+    starts.push(cursor)
+    const lastOfPrev = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate() - 1)
+    cursor = monthStartOf(lastOfPrev)
+  }
+  return starts.map((start, i) => ({
+    label: jalMonthFmt.format(new Date(start.getTime() + 12 * 3600 * 1000)),
+    startMs: start.getTime(),
+    endMs: i === 0 ? Number.MAX_SAFE_INTEGER : starts[i - 1].getTime(),
+  }))
+}
+
+/**
+ * آمار سفارش‌های دستیِ خود کارشناس — مجموع کل + به تفکیک سه ماه اخیر شمسی.
+ * لاگ بیش از سقف ۲۵ صفحه (۵۰۰۰ ردیف) که شد، قدیمی‌ترین‌ها در آمار کل دیده نمی‌شوند.
+ */
+async function myOrderStats(user: string): Promise<{
+  count: number
+  sum: number
+  months: Array<{ label: string; count: number; sum: number }>
+  error: string | null
+}> {
+  const buckets = recentJalaliMonths(new Date())
+  const months = buckets.map((b) => ({ label: b.label, count: 0, sum: 0 }))
   let sum = 0
   try {
     const first = await api.getChangeLog({ user, section: 'orders', action: 'order-create', page: 1, perPage: 200 })
-    for (const e of first.entries) sum += typeof e.amount === 'number' ? e.amount : 0
+    const pages: ChangeLogEntry[][] = [first.entries]
     const totalPages = Math.min(25, Math.ceil(first.total / 200))
     for (let p = 2; p <= totalPages; p++) {
       const r = await api.getChangeLog({ user, section: 'orders', action: 'order-create', page: p, perPage: 200 })
-      for (const e of r.entries) sum += typeof e.amount === 'number' ? e.amount : 0
+      pages.push(r.entries)
     }
-    return { count: first.total, sum, error: null }
+    for (const entries of pages) {
+      for (const e of entries) {
+        const amount = typeof e.amount === 'number' ? e.amount : 0
+        sum += amount
+        months.forEach((m, i) => {
+          if (e.ts >= buckets[i].startMs && e.ts < buckets[i].endMs) {
+            m.count += 1
+            m.sum += amount
+          }
+        })
+      }
+    }
+    return { count: first.total, sum, months, error: null }
   } catch (err) {
-    return { count: 0, sum: 0, error: err instanceof Error ? err.message : String(err) }
+    return { count: 0, sum: 0, months, error: err instanceof Error ? err.message : String(err) }
   }
 }
 
@@ -137,7 +196,8 @@ export default function DashboardView({ configured, conn, storeName, userName, o
   const cur = useCurrency()
   const [now, setNow] = useState(() => new Date())
   const [recent, setRecent] = useState<ChangeLogEntry[] | null>(null)
-  const [stats, setStats] = useState<{ count: number; sum: number; error: string | null } | null>(null)
+  const [stats, setStats] = useState<Awaited<ReturnType<typeof myOrderStats>> | null>(null)
+  const [monthSel, setMonthSel] = useState(-1)
   const seq = useRef(0)
 
   // ساعت زنده — هر ثانیه تیک می‌خورد (زمان محلی دستگاه، همگام با ساعت ایران).
@@ -158,7 +218,7 @@ export default function DashboardView({ configured, conn, storeName, userName, o
       if (seq.current === mySeq) setRecent([])
     }
     if (userName) {
-      const s = await sumMyOrders(userName)
+      const s = await myOrderStats(userName)
       if (seq.current === mySeq) setStats(s)
     }
   }, [userName])
@@ -176,6 +236,14 @@ export default function DashboardView({ configured, conn, storeName, userName, o
 
   const dateLabel = jalaliLabel(now)
   const occ = occasionOf(now)
+
+  // آمارِ کارت‌ها به بازهٔ انتخابی فیلتر ماه وابسته است (−۱ = کل زمان).
+  const shown =
+    stats && !stats.error && stats.months[monthSel]
+      ? monthSel === -1
+        ? { count: stats.count, sum: stats.sum }
+        : stats.months[monthSel]
+      : { count: 0, sum: 0 }
 
   return (
     <div className="page">
@@ -196,15 +264,8 @@ export default function DashboardView({ configured, conn, storeName, userName, o
         </div>
       ) : (
         <>
-          {/* خوش‌آمد + تقویم و ساعت ایرانی — تاریخ و ساعت راست‌چین */}
+          {/* خوش‌آمد + تقویم و ساعت ایرانی — نام کارشناس راست، تاریخ و ساعت چپ */}
           <div className="panel dash-hero">
-            <div className="dash-datebox">
-              <div className="dash-date">{dateLabel}</div>
-              <div className="dash-clock" dir="ltr">
-                {clock()}
-              </div>
-              {occ && <div className="dash-occ">{occ}</div>}
-            </div>
             <div className="dash-hello">
               <div className="dash-hello-title">
                 سلام، {userName?.trim() || 'کارشناس'}
@@ -213,30 +274,61 @@ export default function DashboardView({ configured, conn, storeName, userName, o
                 به پیشخوان فروشگاه «{storeName ?? 'ووکامرس'}» خوش آمدید — همه‌چیز از این‌جا یک نگاه روشن است.
               </div>
             </div>
+            <div className="dash-datebox">
+              <div className="dash-date">{dateLabel}</div>
+              <div className="dash-clock" dir="ltr">
+                {clock()}
+              </div>
+              {occ && <div className="dash-occ">{occ}</div>}
+            </div>
           </div>
 
-          {/* آمار سفارش‌های دستیِ خود کارشناس */}
-          <div className="dash-cards">
-            <div className="panel dash-card">
-              <div className="dash-card-ic indigo">
-                <IconBag size={22} />
+          {/* آمار سفارش‌های دستیِ خود کارشناس — فیلتر بازه و اعداد در یک کادر */}
+          <div className="panel dash-stats">
+            {stats && !stats.error && userName ? (
+              <div className="theme-seg">
+                <button
+                  type="button"
+                  className={'theme-opt' + (monthSel === -1 ? ' active' : '')}
+                  onClick={() => setMonthSel(-1)}
+                >
+                  مجموع
+                </button>
+                {stats.months.map((m, i) => (
+                  <button
+                    key={m.label}
+                    type="button"
+                    className={'theme-opt' + (monthSel === i ? ' active' : '')}
+                    onClick={() => setMonthSel(i)}
+                  >
+                    {m.label}
+                  </button>
+                ))}
               </div>
-              <div>
-                <div className="dash-card-num">
-                  {stats === null ? '…' : stats.error ? '—' : faNum(stats.count)}
+            ) : null}
+            <div className="dash-stats-nums">
+              <div className="dash-stat">
+                <div className="dash-card-ic indigo">
+                  <IconBag size={22} />
                 </div>
-                <div className="dash-card-lbl">سفارش‌هایی که خودم ثبت کرده‌ام</div>
-              </div>
-            </div>
-            <div className="panel dash-card">
-              <div className="dash-card-ic teal">
-                <IconWallet size={22} />
-              </div>
-              <div>
-                <div className="dash-card-num">
-                  {stats === null ? '…' : stats.error ? '—' : `${faNum(stats.sum)} ${cur}`}
+                <div>
+                  <div className="dash-card-num">
+                    {stats === null ? '…' : stats.error ? '—' : faNum(shown.count)}
+                  </div>
+                  <div className="dash-card-lbl">سفارش‌هایی که خودم ثبت کرده‌ام</div>
                 </div>
-                <div className="dash-card-lbl">مجموع مبلغ سفارش‌های من</div>
+              </div>
+              <div className="dash-stat-sep" />
+              <div className="dash-stat">
+                <div className="dash-card-ic teal">
+                  <IconWallet size={22} />
+                </div>
+                <div>
+                  <div className="dash-card-num">
+                    {stats === null ? '…' : stats.error ? '—' : `${faNum(shown.sum)} ${cur}`}
+                  </div>
+                  <div className="dash-card-lbl">مجموع مبلغ سفارش‌های من</div>
+                </div>
               </div>
             </div>
           </div>

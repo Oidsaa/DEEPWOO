@@ -4,6 +4,7 @@ import type { ConnState, CustomerInsights, OpsGroup, OpsOrderRow, Product, Sales
 import { api, isMock } from '../api'
 import { faDate, faDay, faDigits, faNum, faTime, orderStatusMeta } from '../lib/format'
 import { useCurrency } from '../lib/currency'
+import { useSyncRefresh } from '../lib/liveSync'
 import { lastStoreSync } from '../lib/syncStamp'
 import { jalaliToLocalKey, localKeyDaysAgo, localKeyToJalali } from '../lib/jalali'
 import { stockAlertsOf, topRatedProducts } from '../../shared/reports'
@@ -780,7 +781,7 @@ function OpsPanel({ title, sub, g, emptyNote }: { title: string; sub: string; g:
         </div>
       ) : (
         <div className="rp-table-wrap">
-          <div className="rp-table rp-table-head">
+          <div className="rp-table rp-table-head ops">
             <span>سفارش</span>
             <span>مشتری</span>
             <span>تاریخ</span>
@@ -805,7 +806,7 @@ function OpsPanel({ title, sub, g, emptyNote }: { title: string; sub: string; g:
 function OpsRow({ row }: { row: OpsOrderRow }) {
   const meta = orderStatusMeta(row.status)
   return (
-    <div className="rp-table">
+    <div className="rp-table ops">
       <span className="rp-t-cell-main">
         <span className="qo-match-name" dir="ltr">
           #{row.number}
@@ -877,7 +878,7 @@ function StockTab({ catalog, threshold, onThreshold }: { catalog: Product[] | nu
           </div>
         ) : (
           <div className="rp-table-wrap">
-            <div className="rp-table rp-table-head">
+            <div className="rp-table rp-table-head stock">
               <span>کالا</span>
               <span>دسته</span>
               <span>وضعیت</span>
@@ -892,7 +893,7 @@ function StockTab({ catalog, threshold, onThreshold }: { catalog: Product[] | nu
                     ? { cls: 'pill-red', fa: 'ناموجود' }
                     : { cls: 'pill-indigo', fa: 'عقب‌افتاده' }
               return (
-                <div className="rp-table" key={a.product.id}>
+                <div className="rp-table stock" key={a.product.id}>
                   <span className="rp-t-cell-main">
                     <span className="qo-match-name">{a.product.name}</span>
                     {a.product.sku ? <span className="qo-match-sub" dir="ltr">{a.product.sku}</span> : null}
@@ -944,6 +945,8 @@ export default function ReportsView({ configured, conn, storeName, onGoSettings 
   const [catLoading, setCatLoading] = useState(false)
   const [threshold, setThreshold] = useState(5)
   const thresholdInit = useRef(false)
+  /** Re-runs the report when a background sync pass lands new data. */
+  const syncBump = useSyncRefresh()
 
   const runReport = useCallback(
     async (sel: PeriodSel) => {
@@ -975,7 +978,7 @@ export default function ReportsView({ configured, conn, storeName, onGoSettings 
 
   useEffect(() => {
     void runReport(period)
-  }, [period, runReport])
+  }, [period, runReport, syncBump])
 
   const pickPreset = (d: number) => {
     setCustom(false)

@@ -30,6 +30,10 @@ import type {
   ProductVariation,
   Settings,
   StoreStats,
+  SyncChangeEntry,
+  SyncChangeQuery,
+  SyncChangeResult,
+  SyncEntityState,
   VariationPatch,
   WarehousesOverview,
   WarehouseItemState,
@@ -793,6 +797,16 @@ const MOCK_LOG: ChangeLogEntry[] = [
   { ts: Date.now() - 9 * 3_600_000, user: 'انباردار کارگاه', section: 'warehouses', action: 'save', title: 'ثبت موجودی انبار — محصول #455', details: '۲ ترکیب • همگام با سایت' },
 ]
 
+/** Demo rows of the «تغییرات فروشگاه» log (detected during background syncs). */
+const MOCK_SYNC_CHANGES: SyncChangeEntry[] = [
+  { id: 12, entity: 'orders', entityId: 10431, changeType: 'created', summary: 'سفارش جدید: #10431', details: 'سارا موسوی • ۱۲۵۰۰۰۰ تومان', ts: Date.now() - 4 * 60_000 },
+  { id: 11, entity: 'orders', entityId: 10429, changeType: 'status_changed', summary: 'تغییر وضعیت سفارش #10429', details: 'در حال انجام ← انجام شده', ts: Date.now() - 26 * 60_000 },
+  { id: 10, entity: 'products', entityId: 471, changeType: 'updated', summary: 'بروزرسانی محصول: کیف چرم دست‌دوز', details: 'موجودی و قیمت به‌روزرسانی شد', ts: Date.now() - 52 * 60_000 },
+  { id: 9, entity: 'customers', entityId: 812, changeType: 'created', summary: 'مشتری جدید: حسین امیری', details: '', ts: Date.now() - 3 * 3_600_000 },
+  { id: 8, entity: 'orders', entityId: 10428, changeType: 'updated', summary: 'بروزرسانی سفارش #10428', details: 'اقلام سفارش تغییر کرد', ts: Date.now() - 5 * 3_600_000 },
+  { id: 7, entity: 'products', entityId: 503, changeType: 'status_changed', summary: 'تغییر وضعیت محصول: شال بافت زمستانی', details: 'انتشار ← پیش‌نویس', ts: Date.now() - 8 * 3_600_000 },
+]
+
 export const mockApi: ApiBridge = {
   /** Demo has no cross-view cache — every read already rebuilds fresh demo data. */
   async clearCache() {
@@ -801,7 +815,12 @@ export const mockApi: ApiBridge = {
   },
   async getCacheStatus() {
     await delay(20)
-    return { hits: 0, misses: 0, staleServes: 0, fetches: 0, size: 0, syncedAt: {} }
+    const entities: Record<string, SyncEntityState> = {
+      orders: { lastSyncAt: new Date(Date.now() - 60_000).toISOString(), lastError: null, itemCount: allOrders().length, truncated: false, running: false },
+      products: { lastSyncAt: new Date(Date.now() - 5 * 60_000).toISOString(), lastError: null, itemCount: ALL_PRODUCTS.length, truncated: false, running: false },
+      customers: { lastSyncAt: new Date(Date.now() - 15 * 60_000).toISOString(), lastError: null, itemCount: ALL.length, truncated: false, running: false },
+    }
+    return { hits: 0, misses: 0, staleServes: 0, fetches: 0, size: 0, syncedAt: {}, entities }
   },
   async getSettings(): Promise<Settings> {
     await delay(120)
@@ -1104,6 +1123,30 @@ export const mockApi: ApiBridge = {
   onStockChanged(): () => void {
     return () => {}
   },
+  onSynced(): () => void {
+    return () => {}
+  },
+  async getSyncChanges(query: SyncChangeQuery = {}): Promise<SyncChangeResult> {
+    await delay(200)
+    const perPage = Math.min(200, Math.max(10, Number(query.perPage) || 50))
+    const page = Math.max(1, Number(query.page) || 1)
+    let list = [...MOCK_SYNC_CHANGES].sort((a, b) => b.ts - a.ts)
+    if (query.entity) list = list.filter((e) => e.entity === query.entity)
+    if (query.changeType) list = list.filter((e) => e.changeType === query.changeType)
+    const start = (page - 1) * perPage
+    return { entries: list.slice(start, start + perPage), total: list.length, page, perPage }
+  },
+  async syncNow(entity?: 'orders' | 'products' | 'customers'): Promise<SyncEntityState[]> {
+    await delay(900)
+    const state = (e: 'orders' | 'products' | 'customers'): SyncEntityState => ({
+      lastSyncAt: new Date().toISOString(),
+      lastError: null,
+      itemCount: e === 'orders' ? allOrders().length : e === 'products' ? ALL_PRODUCTS.length : ALL.length,
+      truncated: false,
+      running: false,
+    })
+    return entity ? [state(entity)] : [state('orders'), state('products'), state('customers')]
+  },
   async listAccounts(): Promise<AccountsSnapshot> {
     await delay(150)
     return mockAccountsSnapshot()
@@ -1142,16 +1185,22 @@ export const mockApi: ApiBridge = {
     localStorage.setItem('mock-settings', JSON.stringify(next))
     return { activeId, accounts: remaining }
   },
-  async switchAccount(id: string): Promise<{ ok: boolean; userName?: string | null; message?: string }> {
+  async switchAccount(id: string, pin?: string): Promise<{ ok: boolean; userName?: string | null; message?: string; needPin?: boolean; hasPin?: boolean }> {
     await delay(300)
     const s = storedSettings()
     if (!isDemoSettings(s)) throw new Error(NOT_REAL_MSG)
     const snapshot = mockAccountsSnapshot()
     const acc = snapshot.accounts.find((a) => a.id === id)
     if (!acc) return { ok: false, message: 'اکانت موردنظر پیدا نشد.' }
+    // نمایش آزمایشی رمز واقعی ندارد — هر رمزی (یا هیچ) پذیرفته می‌شود.
+    void pin
     const next: Settings = { ...s, activeAccountId: id, userName: acc.label }
     localStorage.setItem('mock-settings', JSON.stringify(next))
     return { ok: true, userName: acc.label }
+  },
+  async changeAccountPin(): Promise<{ ok: boolean; message?: string }> {
+    await delay(200)
+    return { ok: true }
   },
   async getCurrency(): Promise<string> {
     await delay(30)

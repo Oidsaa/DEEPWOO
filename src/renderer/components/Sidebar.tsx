@@ -11,6 +11,7 @@ import {
   IconGear,
   IconGrid,
   IconPlus,
+  IconShield,
   IconStore,
   IconUsers,
   IconWarehouse,
@@ -31,6 +32,10 @@ interface Props {
   switchingAccount?: boolean
   /** خطای سوئیچ اکانت — زیر دکمهٔ کارشناس نمایش داده می‌شود. */
   switchError?: string | null
+  /** پیام موفقیت (مثلاً پس از تغییر رمز) — چند ثانیه زیر دکمهٔ کارشناس می‌ماند. */
+  switchOk?: string | null
+  /** تغییر رمز اکانتِ فعال از منوی سوئیچر. */
+  onChangeActivePin?: () => void
   onSwitchAccount?: (id: string) => void
   onNavigate: (view: ViewId) => void
 }
@@ -46,6 +51,8 @@ export default function Sidebar({
   accounts,
   switchingAccount,
   switchError,
+  switchOk,
+  onChangeActivePin,
   onSwitchAccount,
   onNavigate,
 }: Props) {
@@ -236,6 +243,7 @@ export default function Sidebar({
                     role="menuitem"
                     className={'sb-acct' + (a.id === accounts.activeId ? ' active' : '')}
                     disabled={switchingAccount}
+                    title={a.hasPin ? 'این اکانت رمز شخصی دارد' : 'این اکانت هنوز رمز شخصی ندارد'}
                     onClick={() => {
                       setAcctOpen(false)
                       if (a.id !== accounts.activeId) onSwitchAccount?.(a.id)
@@ -244,9 +252,27 @@ export default function Sidebar({
                     <span className={'sb-acct-dot' + (a.id === accounts.activeId ? ' on' : '')} />
                     <span className="sb-acct-label">{a.label}</span>
                     {a.id === accounts.activeId && <span className="sb-acct-active">فعال</span>}
+                    {a.hasPin && (
+                      <span className="sb-acct-lock" title="محافظت‌شده با رمز شخصی">
+                        <IconShield size={12} />
+                      </span>
+                    )}
                   </button>
                 ))}
                 <div className="sb-acct-sep" />
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="sb-acct sb-acct-manage"
+                  onClick={() => {
+                    setAcctOpen(false)
+                    onChangeActivePin?.()
+                  }}
+                  title="تغییر رمز شخصی اکانتِ فعال"
+                >
+                  <IconShield size={13} />
+                  تغییر رمز اکانت فعال
+                </button>
                 <button
                   type="button"
                   role="menuitem"
@@ -270,6 +296,11 @@ export default function Sidebar({
         {switchError && (
           <div className="sb-switch-err" role="alert">
             {switchError}
+          </div>
+        )}
+        {!switchError && switchOk && (
+          <div className="sb-switch-ok" role="status">
+            {switchOk}
           </div>
         )}
         {isMock && <div className="mock-chip">پیش‌نمایش با دادهٔ آزمایشی</div>}

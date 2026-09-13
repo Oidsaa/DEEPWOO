@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { ConnState, WarehouseItemState, WarehousesOverview } from '../../shared/types'
 import { api, isMock } from '../api'
 import { faDigits, faNum, faTime } from '../lib/format'
+import { useSyncRefresh } from '../lib/liveSync'
 import { forceRefresh, reloadView } from '../lib/refresh'
 import { lastStoreSync } from '../lib/syncStamp'
 import WarehouseStockModal from './WarehouseStockModal'
@@ -52,6 +53,10 @@ export default function WarehousesView({ configured, conn, storeName, onGoSettin
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [loadCount, setLoadCount] = useState(0)
+  /** گذر سینک دستیِ «به‌روزرسانی» در جریان است — آیکن دکمه می‌چرخد و دکمه قفل است. */
+  const [syncing, setSyncing] = useState(false)
+  /** Bumps on every background sync pass / progress ping — live lists. */
+  const syncBump = useSyncRefresh()
   const [syncedAt, setSyncedAt] = useState<Date | null>(null)
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<FilterKey>('all')
@@ -66,7 +71,8 @@ export default function WarehousesView({ configured, conn, storeName, onGoSettin
       return
     }
     let cancelled = false
-    setLoading(true)
+    // Silent refetch on sync pings once data exists — no spinner flash.
+    if (!overview) setLoading(true)
     setError(null)
     api
       .getWarehousesOverview()
@@ -89,7 +95,7 @@ export default function WarehousesView({ configured, conn, storeName, onGoSettin
     return () => {
       cancelled = true
     }
-  }, [configured, loadCount])
+  }, [configured, loadCount, syncBump])
 
   // A status change (or any stock-affecting write) pushes data:stock-changed — reload.
   useEffect(() => api.onStockChanged(() => reloadView(setLoadCount)), [])
@@ -198,10 +204,11 @@ export default function WarehousesView({ configured, conn, storeName, onGoSettin
           <button
             type="button"
             className="btn btn-ghost"
-            onClick={() => forceRefresh(setLoadCount)}
-            title="همگام‌سازی مجدد با فروشگاه"
+            onClick={() => forceRefresh('products', setLoadCount, setSyncing)}
+            disabled={syncing}
+            title={syncing ? 'در حال به‌روزرسانی از فروشگاه…' : 'همگام‌سازی مجدد با فروشگاه'}
           >
-            <IconRefresh size={15} className={loading ? 'spin' : ''} />
+            <IconRefresh size={15} className={loading || syncing ? 'spin' : ''} />
             بارگذاری مجدد
           </button>
         )}
@@ -211,7 +218,13 @@ export default function WarehousesView({ configured, conn, storeName, onGoSettin
         <div className="notice err">
           <IconAlert size={17} />
           <div style={{ flex: 1 }}>{conn.message}</div>
-          <button type="button" className="btn btn-sm btn-ghost" onClick={() => forceRefresh(setLoadCount)}>
+          <button
+            type="button"
+            className="btn btn-sm btn-ghost"
+            disabled={syncing}
+            onClick={() => forceRefresh('products', setLoadCount, setSyncing)}
+          >
+            {syncing && <IconRefresh size={14} className="spin" />}
             تلاش دوباره
           </button>
         </div>
@@ -383,8 +396,13 @@ export default function WarehousesView({ configured, conn, storeName, onGoSettin
                 <div className="empty-title">دریافت موجودی انبارها ناموفق بود</div>
                 <div className="empty-sub">{error}</div>
                 <div className="empty-action">
-                  <button type="button" className="btn btn-ghost" onClick={() => forceRefresh(setLoadCount)}>
-                    <IconRefresh size={15} />
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    disabled={syncing}
+                    onClick={() => forceRefresh('products', setLoadCount, setSyncing)}
+                  >
+                    <IconRefresh size={15} className={syncing ? 'spin' : ''} />
                     تلاش دوباره
                   </button>
                 </div>

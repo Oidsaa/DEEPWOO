@@ -5,9 +5,11 @@ import type { ConnState, Order, OrderNote, OrdersListResult, OrderStatusTotal, R
 import { api, isMock } from '../api'
 import { avatarPalette, faDate, faDigits, faNum, faTime, orderStatusMeta } from '../lib/format'
 import { useCurrency } from '../lib/currency'
+import { useSyncRefresh } from '../lib/liveSync'
 import { forceRefresh, reloadView } from '../lib/refresh'
 import { lastStoreSync } from '../lib/syncStamp'
 import { bulkPostalHtml, bulkStoreHtml, bulkWarehouseHtml, RECEIPT_KINDS, type BulkReceiptDoc, type ReceiptShop } from '../lib/print'
+import { measureWarehouseHeights } from '../lib/printMeasure'
 import BulkPrintModal from './BulkPrintModal'
 import {
   IconAlert,
@@ -44,6 +46,10 @@ export default function OrdersView({ configured, conn, storeName, onGoSettings }
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [loadCount, setLoadCount] = useState(0)
+  /** گذر سینک دستیِ «به‌روزرسانی» در جریان است — آیکن دکمه می‌چرخد و دکمه قفل است. */
+  const [syncing, setSyncing] = useState(false)
+  /** Bumps on every background sync pass / progress ping — live lists. */
+  const syncBump = useSyncRefresh()
   const [syncedAt, setSyncedAt] = useState<Date | null>(null)
   /** تعداد سفارش‌های هر وضعیت (چیپ‌های فیلتر هدر). */
   const [statusTotals, setStatusTotals] = useState<OrderStatusTotal[] | null>(null)
@@ -105,12 +111,18 @@ export default function OrdersView({ configured, conn, storeName, onGoSettings }
         postcode: s.storePostcode,
         phone: s.storePhone,
         logo: s.storeLogo,
+        footer: s.receiptFooter,
         noteExclusions: s.noteExclusions,
       }
       let doc: BulkReceiptDoc
       if (type === 'store') doc = bulkStoreHtml(orders, shop)
       else if (type === 'postal') doc = bulkPostalHtml(orders, shop)
-      else doc = bulkWarehouseHtml(orders, shop, notesOf)
+      else {
+        // Exact label heights (content + ۱cm bottom) — one hidden-frame pass;
+        // falls back to wrap estimates when measuring fails.
+        const exact = await measureWarehouseHeights(orders, shop, notesOf).catch(() => undefined)
+        doc = bulkWarehouseHtml(orders, shop, notesOf, exact && exact.size ? exact : undefined)
+      }
       setBulkDoc(doc)
     } catch (e) {
       setBulkPrintError(e instanceof Error ? e.message : String(e))
@@ -132,7 +144,8 @@ export default function OrdersView({ configured, conn, storeName, onGoSettings }
       return
     }
     let cancelled = false
-    setLoading(true)
+    // Silent refetch on sync pings once rows exist — no spinner flash.
+    if (!data) setLoading(true)
     setError(null)
     api
       .listOrders({
@@ -161,7 +174,7 @@ export default function OrdersView({ configured, conn, storeName, onGoSettings }
     return () => {
       cancelled = true
     }
-  }, [configured, params.search, params.status, params.page, params.perPage, loadCount])
+  }, [configured, params.search, params.status, params.page, params.perPage, loadCount, syncBump])
 
   // Status totals for the header filter chips (همهٔ سفارش‌ها + هر وضعیت).
   useEffect(() => {
@@ -181,7 +194,7 @@ export default function OrdersView({ configured, conn, storeName, onGoSettings }
     return () => {
       cancelled = true
     }
-  }, [configured, loadCount])
+  }, [configured, loadCount, syncBump])
 
   const onSearchChange = (value: string) => {
     setSearchInput(value)
@@ -266,7 +279,13 @@ export default function OrdersView({ configured, conn, storeName, onGoSettings }
         <div className="notice err">
           <IconAlert size={17} />
           <div style={{ flex: 1 }}>{conn.message}</div>
-          <button type="button" className="btn btn-sm btn-ghost" onClick={() => forceRefresh(setLoadCount)}>
+          <button
+            type="button"
+            className="btn btn-sm btn-ghost"
+            disabled={syncing}
+            onClick={() => forceRefresh('orders', setLoadCount, setSyncing)}
+          >
+            {syncing && <IconRefresh size={14} className="spin" />}
             تلاش دوباره
           </button>
         </div>
@@ -333,10 +352,11 @@ export default function OrdersView({ configured, conn, storeName, onGoSettings }
               <button
                 type="button"
                 className="btn-icon"
-                title="بارگذاری مجدد"
-                onClick={() => forceRefresh(setLoadCount)}
+                title={syncing ? 'در حال به‌روزرسانی از فروشگاه…' : 'بارگذاری مجدد'}
+                disabled={syncing}
+                onClick={() => forceRefresh('orders', setLoadCount, setSyncing)}
               >
-                <IconRefresh size={15} className={loading ? 'spin' : ''} />
+                <IconRefresh size={15} className={loading || syncing ? 'spin' : ''} />
               </button>
             </div>
           </div>
@@ -415,8 +435,13 @@ export default function OrdersView({ configured, conn, storeName, onGoSettings }
               <div className="empty-title">دریافت سفارش‌ها ناموفق بود</div>
               <div className="empty-sub">{error}</div>
               <div className="empty-action">
-                <button type="button" className="btn btn-ghost" onClick={() => forceRefresh(setLoadCount)}>
-                  <IconRefresh size={15} />
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  disabled={syncing}
+                  onClick={() => forceRefresh('orders', setLoadCount, setSyncing)}
+                >
+                  <IconRefresh size={15} className={syncing ? 'spin' : ''} />
                   تلاش دوباره
                 </button>
               </div>

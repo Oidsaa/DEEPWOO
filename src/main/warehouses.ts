@@ -22,7 +22,6 @@
 import type {
   Order,
   Product,
-  ProductDetail,
   ProductVariation,
   Settings,
   WarehousesOverview,
@@ -33,13 +32,10 @@ import type {
   WarehouseStockSaveResult,
 } from '../shared/types'
 import { ALLOC_MARKER, DEFAULT_WAREHOUSES, readWarehouseStock, stockMetaKey } from '../shared/warehouses'
-import { createOrderNote, getProductCatalog, mapLimit, wooRequest } from './woo'
+import { createOrderNote, wooRequest } from './woo'
 import type { WooConfig } from './woo'
+import { allVariations, catalog, patchNodeStock } from './store'
 
-/** Page cap while walking one variable product's combinations. */
-const MAX_VARIATION_PAGES = 20
-/** Concurrency of the per-product variation walks in the overview. */
-const OVERVIEW_CONCURRENCY = 6
 /** Auto-allocation only examines orders created in the last 30 days — older ones need a keeper's explicit action. */
 const RECONCILE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000
 /** Max orders examined per reconcile pass. */
@@ -110,41 +106,16 @@ function itemState(
 /**
  * Full انبارها snapshot: every simple product and every combination of every
  * variable product, with the site stock and each warehouse's registered
- * count. The variation walks dominate the cost, so the caller caches the
- * result under ONE key ('warehouses-overview') — the sidebar badge and the
- * view then share the same computation.
+ * count. Everything is answered from the local store (catalog + variations
+ * rows), so the snapshot is instant and always as fresh as the last products
+ * sync — no API walk at read time.
  */
-export async function warehousesOverview(cfg: WooConfig, settings: Settings): Promise<WarehousesOverview> {
+export function warehousesOverview(settings: Settings): WarehousesOverview {
   const warehouses = activeWarehouses(settings)
-  const catalog = await getProductCatalog(cfg)
-
-  const variationsByProduct = new Map<number, ProductVariation[]>()
-  const variable = catalog.products.filter((p) => p.type === 'variable')
-  await mapLimit(variable, OVERVIEW_CONCURRENCY, async (p) => {
-    try {
-      const all: ProductVariation[] = []
-      let page = 1
-      for (;;) {
-        const { data, headers } = await wooRequest<ProductVariation[]>(
-          cfg,
-          'GET',
-          `/products/${p.id}/variations`,
-          { per_page: 100, page, orderby: 'id', order: 'asc' },
-        )
-        all.push(...data)
-        const totalPages = Math.max(1, Number(headers.get('x-wp-totalpages') ?? 1))
-        if (data.length === 0 || page >= totalPages || page >= MAX_VARIATION_PAGES) break
-        page += 1
-      }
-      variationsByProduct.set(p.id, all)
-    } catch {
-      // One flaky product must not kill the whole snapshot; its rows are
-      // simply missing until the next refresh.
-    }
-  })
+  const variationsByProduct = allVariations()
 
   const items: WarehouseItemState[] = []
-  for (const p of catalog.products) {
+  for (const p of catalog().products) {
     if (p.type === 'variable') {
       for (const v of variationsByProduct.get(p.id) ?? []) {
         const label = (v.attributes ?? []).map((a) => a.option).filter(Boolean).join(' / ')
@@ -225,6 +196,13 @@ export async function saveWarehouseStock(
         )
       }
     }
+    // Fold the write into the local store so the انبارها view reflects it
+    // without waiting for the next products sync.
+    patchNodeStock(productId, row.variationId ?? null, {
+      stock: typeof node.data.stock_quantity === 'number' ? Math.round(node.data.stock_quantity) : undefined,
+      stockStatus: node.data.stock_status,
+      meta: Object.fromEntries(ids.map((id) => [stockMetaKey(id), values[id]])),
+    })
     out.push({
       variationId: row.variationId ?? null,
       siteStock: typeof node.data.stock_quantity === 'number' ? Math.round(node.data.stock_quantity) : null,
@@ -357,6 +335,10 @@ export async function allocateOrder(
       .map(([id, v]) => ({ key: stockMetaKey(id), value: (e.wh[id] ?? 0) + v }))
     if (meta.length === 0) continue
     await wooRequest(cfg, 'PUT', nodePath(e.productId, e.variationId), {}, { meta_data: meta })
+    // Keep the local store in step with the moved counts.
+    patchNodeStock(e.productId, e.variationId, {
+      meta: Object.fromEntries(meta.map((m) => [m.key, m.value as number])),
+    })
   }
 
   // 2) Claim the order with the marker — idempotency depends on it.
@@ -468,74 +450,3 @@ export function scheduleReconcile(cfg: WooConfig, settings: Settings, orders: Or
     })
 }
 
-/* ------------------------------------------------------------------ */
-/* Pure cache patches — keep the overview/detail caches fresh after save   */
-/* ------------------------------------------------------------------ */
-
-function metaWith(
-  meta: Array<{ id?: number; key: string; value: unknown }> | undefined,
-  key: string,
-  value: unknown,
-): Array<{ id?: number; key: string; value: unknown }> {
-  const out = (meta ?? []).map((m) => ({ ...m }))
-  const i = out.findIndex((m) => m.key === key)
-  if (i >= 0) out[i] = { ...out[i], value }
-  else out.push({ key, value })
-  return out
-}
-
-/** Fold a successful انبارداری save into a cached overview (keeps it fresh). */
-export function applySaveToOverview(
-  overview: WarehousesOverview,
-  result: WarehouseStockSaveResult,
-): WarehousesOverview {
-  const rows = new Map(result.rows.map((r) => [r.variationId ?? 0, r]))
-  const items = overview.items.map((it) => {
-    if (it.productId !== result.productId) return it
-    const row = rows.get(it.variationId ?? 0)
-    if (!row) return it
-    const warehouseStock = { ...it.warehouseStock }
-    for (const [id, v] of Object.entries(row.warehouseStock)) {
-      if (id in warehouseStock) warehouseStock[id] = v
-    }
-    const vals = Object.values(warehouseStock).filter((v): v is number => typeof v === 'number')
-    const sum = vals.length > 0 ? vals.reduce((a, b) => a + b, 0) : null
-    const siteStock = typeof row.siteStock === 'number' ? row.siteStock : it.siteStock
-    return {
-      ...it,
-      warehouseStock,
-      sum,
-      siteStock,
-      delta: sum !== null && siteStock !== null ? sum - siteStock : null,
-    }
-  })
-  return { ...overview, items, computedAt: new Date().toISOString() }
-}
-
-/** Fold a successful انبارداری save into the cached product detail. */
-export function applySaveToProductDetail(
-  detail: ProductDetail,
-  result: WarehouseStockSaveResult,
-): ProductDetail {
-  const rows = new Map(result.rows.map((r) => [r.variationId ?? 0, r]))
-  const patchNode = <T extends MetaNode>(
-    node: T,
-    row: WarehouseSaveRowResult,
-  ): T => ({
-    ...node,
-    stock_quantity: typeof row.siteStock === 'number' ? row.siteStock : node.stock_quantity,
-    meta_data: Object.entries(row.warehouseStock).reduce(
-      (m, [id, v]) => metaWith(m, stockMetaKey(id), v),
-      node.meta_data ?? [],
-    ),
-    warehouseStock: { ...node.warehouseStock, ...row.warehouseStock },
-  })
-  const productRow = rows.get(0)
-  return {
-    product: productRow ? patchNode(detail.product, productRow) : detail.product,
-    variations: detail.variations.map((v) => {
-      const row = rows.get(v.id)
-      return row ? patchNode(v, row) : v
-    }),
-  }
-}

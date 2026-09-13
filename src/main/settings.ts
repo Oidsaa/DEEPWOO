@@ -9,6 +9,9 @@ const EMPTY: Settings = { siteUrl: '', consumerKey: '', consumerSecret: '' }
 /** Cache tuning defaults (seconds / hours) — mirrored by the Settings UI. */
 export const CACHE_DEFAULTS = { listSec: 60, detailSec: 120, reportSec: 300, staleHours: 12 } as const
 
+/** Background auto-sync defaults (minutes per entity) — WooDesktop's cadence. */
+export const SYNC_DEFAULTS = { ordersMin: 2, productsMin: 60, customersMin: 240 } as const
+
 type CacheKind = 'list' | 'detail' | 'report'
 
 function clampNum(v: unknown, min: number, max: number, dflt: number): number {
@@ -56,6 +59,7 @@ export function getSettings(): Settings {
       storeAddress: typeof data.storeAddress === 'string' ? data.storeAddress : undefined,
       storePostcode: typeof data.storePostcode === 'string' ? data.storePostcode : undefined,
       storePhone: typeof data.storePhone === 'string' ? data.storePhone : undefined,
+      receiptFooter: typeof data.receiptFooter === 'string' ? data.receiptFooter : undefined,
       storeLogo: typeof data.storeLogo === 'string' ? data.storeLogo : undefined,
       theme: data.theme === 'light' ? 'light' : data.theme === 'dark' ? 'dark' : undefined,
       accentColor:
@@ -88,6 +92,10 @@ export function getSettings(): Settings {
       cacheDetailSec: clampNum(data.cacheDetailSec, 5, 86_400, CACHE_DEFAULTS.detailSec),
       cacheReportSec: clampNum(data.cacheReportSec, 5, 86_400, CACHE_DEFAULTS.reportSec),
       cacheStaleHours: clampNum(data.cacheStaleHours, 0, 168, CACHE_DEFAULTS.staleHours),
+      autoSyncEnabled: data.autoSyncEnabled === false ? false : true,
+      syncOrdersMin: clampNum(data.syncOrdersMin, 1, 1440, SYNC_DEFAULTS.ordersMin),
+      syncProductsMin: clampNum(data.syncProductsMin, 5, 1440, SYNC_DEFAULTS.productsMin),
+      syncCustomersMin: clampNum(data.syncCustomersMin, 15, 1440, SYNC_DEFAULTS.customersMin),
     }
   } catch {
     return { ...EMPTY }
@@ -134,6 +142,7 @@ export function sanitizeSettings(input: Settings): Settings {
     storeAddress: (input.storeAddress ?? '').trim() || undefined,
     storePostcode: (input.storePostcode ?? '').trim() || undefined,
     storePhone: (input.storePhone ?? '').trim() || undefined,
+    receiptFooter: (input.receiptFooter ?? '').trim() || undefined,
     storeLogo: (input.storeLogo ?? '').trim() || undefined,
     theme: input.theme === 'light' ? 'light' : input.theme === 'dark' ? 'dark' : undefined,
     accentColor:
@@ -160,6 +169,10 @@ export function sanitizeSettings(input: Settings): Settings {
     cacheDetailSec: clampNum(input.cacheDetailSec, 5, 86_400, CACHE_DEFAULTS.detailSec),
     cacheReportSec: clampNum(input.cacheReportSec, 5, 86_400, CACHE_DEFAULTS.reportSec),
     cacheStaleHours: clampNum(input.cacheStaleHours, 0, 168, CACHE_DEFAULTS.staleHours),
+    autoSyncEnabled: input.autoSyncEnabled !== false,
+    syncOrdersMin: clampNum(input.syncOrdersMin, 1, 1440, SYNC_DEFAULTS.ordersMin),
+    syncProductsMin: clampNum(input.syncProductsMin, 5, 1440, SYNC_DEFAULTS.productsMin),
+    syncCustomersMin: clampNum(input.syncCustomersMin, 15, 1440, SYNC_DEFAULTS.customersMin),
   }
 }
 
