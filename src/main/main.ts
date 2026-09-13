@@ -265,6 +265,14 @@ async function adaptOrderStates(
   if (isCode(s)) payload!.shipping!.state = resolve(s)!
 }
 
+/** برچسب اکانت فعال — هویت کارشناس در سطح برنامه (چند کلید می‌توانند یک کاربر سایت باشند). */
+function activeAccountLabel(): string | null {
+  const s = getSettings()
+  const list = s.accounts ?? []
+  const act = list.find((a) => a.id === s.activeAccountId) ?? list[0]
+  return act?.label ?? null
+}
+
 /** Record one action in the لاگ تغییرات, attributed to the کارشناس (API key owner). */
 function logAction(
   section: ChangeLogSection,
@@ -275,7 +283,7 @@ function logAction(
   amount?: number,
 ): void {
   const s = getSettings()
-  appendLog({ user: s.userName?.trim() || 'نامشخص', section, action, title, details, target, amount })
+  appendLog({ user: (activeAccountLabel() ?? s.userName?.trim()) || 'نامشخص', section, action, title, details, target, amount })
   // Mirror to the WP-side shared log so every device sees the same لاگ — best-effort.
   void pushChangeLog(section, action, title, details, target, amount)
 }
@@ -343,6 +351,54 @@ async function resolveUserName(): Promise<void> {
   if (s.userName !== name) saveSettings({ ...s, userName: name })
 }
 
+/* برچسب عمومی («کارشناس اصلی»/«کارشناس ۲») جای نام واقعی صاحب کلید نمی‌نشیند —
+   با پرس‌وجو از سایت، این برچسب‌ها با نام واقعی صاحب هر کلید جایگزین می‌شوند. */
+const GENERIC_LABEL_RE = /^کارشناس( اصلی)?( [0-9۰-۹]+)?$/
+
+function isGenericLabel(label: string | undefined | null): boolean {
+  const t = (label ?? '').trim()
+  return !t || GENERIC_LABEL_RE.test(t)
+}
+
+let healLabelsRun: Promise<void> | null = null
+
+/** بازسازی یک‌بارهٔ برچسب‌های عمومی اکانت‌ها از نام واقعی صاحب هر کلید. */
+function healGenericAccountLabels(): Promise<void> {
+  healLabelsRun ??= (async () => {
+    const s = getSettings()
+    if (!s.siteUrl) return
+    const targets = (s.accounts ?? []).filter((a) => isGenericLabel(a.label))
+    if (!targets.length) return
+    const names = await Promise.all(
+      targets.map(async (a) => {
+        const probe: Settings = { ...s, consumerKey: a.consumerKey, consumerSecret: a.consumerSecret }
+        try {
+          let n = await getAuthUser(probe)
+          if (!n) n = (await wpUsersMe(probe)).name
+          return (n ?? '').trim()
+        } catch {
+          return ''
+        }
+      }),
+    )
+    const byId = new Map<string, string>()
+    targets.forEach((a, i) => {
+      if (names[i] && names[i] !== a.label) byId.set(a.id, names[i])
+    })
+    if (!byId.size) return
+    const cur = getSettings()
+    const accounts = (cur.accounts ?? []).map((a) => {
+      const n = byId.get(a.id)
+      return n ? { ...a, label: n } : a
+    })
+    saveSettings(
+      sanitizeSettings({ ...cur, accounts, userName: byId.get(cur.activeAccountId ?? '') ?? cur.userName }),
+    )
+    logAction('settings', 'account-label', 'نام واقعی کارشناس‌ها از فروشگاه جای برچسب پیش‌فرض نشست')
+  })()
+  return healLabelsRun
+}
+
 function registerIpc(): void {
   ipcMain.handle('settings:get', () => getSettings())
 
@@ -381,7 +437,11 @@ function registerIpc(): void {
     return { activeId, accounts }
   }
 
-  ipcMain.handle('accounts:list', () => accountSnapshot())
+  // برچسب‌های عمومی ممکن است هنوز در حال بازسازی از سایت باشند — حداکثر ۱۰ ثانیه صبر.
+  ipcMain.handle('accounts:list', async () => {
+    await Promise.race([healGenericAccountLabels(), new Promise<void>((r) => setTimeout(r, 10_000))])
+    return accountSnapshot()
+  })
 
   ipcMain.handle('accounts:add', async (_event, payload: { label?: string; consumerKey: string; consumerSecret: string }) => {
     const s = getSettings()
@@ -505,7 +565,14 @@ function registerIpc(): void {
       }
     }
     const cur = getSettings()
-    if (cur.userName !== userName) saveSettings({ ...cur, userName })
+    // برچسب عمومی اکانت («کارشناس اصلی») هم با نام واقعی صاحب کلید جایگزین شود.
+    const relabel = isGenericLabel(acc.label) && userName !== acc.label
+    const accounts = relabel
+      ? (cur.accounts ?? []).map((a) => (a.id === acc.id ? { ...a, label: userName } : a))
+      : cur.accounts
+    if (relabel || cur.userName !== userName) {
+      saveSettings(sanitizeSettings({ ...cur, accounts, userName }))
+    }
     logAction('settings', 'account-switch', `سوئیچ به اکانت کارشناس: ${userName}`)
     return { ok: true, userName }
   })
@@ -898,6 +965,8 @@ app.whenReady().then(() => {
   startWorker()
   // نام کارشناس (صاحب کلید API) را در پس‌زمینه تازه کن — مبنای «لاگ تغییرات».
   void resolveUserName()
+  // برچسب‌های عمومی اکانت‌ها («کارشناس اصلی») را از نام واقعی صاحب کلیدها بازساز.
+  void healGenericAccountLabels()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

@@ -239,6 +239,10 @@ export default function App() {
   const configured = isConfigured(settings)
   /** Store name from «اطلاعات رسید» (Settings), shown across the UI. */
   const storeName = (settings?.storeName ?? '').trim() || null
+  /** نام کارشناسِ فعال — اولویت با برچسب اکانتِ فعال؛ بدون اکانت‌ها، نام صاحب کلید.
+   *  نامِ resolveشده از سایت برای همهٔ کلیدهای یک کاربر یکی است و کارشناس فعال را نشان نمی‌دهد. */
+  const activeStaffName =
+    accounts?.accounts.find((a) => a.id === accounts?.activeId)?.label ?? settings?.userName ?? null
   /** Views remount when the account changes too — every view refetches fresh data. */
   const viewKey = `${configured}-${settings?.siteUrl ?? ''}-${settings?.activeAccountId ?? ''}-${conn.state}`
 
@@ -250,7 +254,7 @@ export default function App() {
         host={hostOf(settings?.siteUrl ?? '')}
         conn={conn}
         storeName={storeName}
-        userName={settings?.userName ?? null}
+        userName={activeStaffName}
         logo={settings?.storeLogo ?? null}
         accounts={accounts}
         switchingAccount={switching}
@@ -267,7 +271,7 @@ export default function App() {
             configured={configured}
             conn={conn}
             storeName={storeName}
-            userName={settings?.userName ?? null}
+            userName={activeStaffName}
             onGoSettings={() => setView('settings')}
             onOpenLog={() => setView('log')}
           />
