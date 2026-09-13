@@ -135,6 +135,8 @@ export interface SyncChangeEntry {
   summary: string
   /** توضیح اضافه (مثل وضعیت قبلی → جدید). */
   details: string
+  /** کارشناسی که گذر سینکِ کشفِ این تغییر را اجرا کرده (ردیف‌های قدیمی‌تر null). */
+  actor?: string | null
   /** ms epoch of the change detection time. */
   ts: number
 }

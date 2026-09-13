@@ -144,6 +144,7 @@ CREATE TABLE IF NOT EXISTS change_log (
   change_type TEXT NOT NULL,
   summary TEXT NOT NULL,
   details TEXT NOT NULL DEFAULT '',
+  actor TEXT,
   ts INTEGER NOT NULL
 );
 
@@ -221,6 +222,12 @@ export function initStore(file: string, siteKey: string): void {
   db.exec('PRAGMA journal_mode = WAL')
   db.exec('PRAGMA synchronous = NORMAL')
   db.exec(SCHEMA)
+  // پایگاه‌های قدیمی‌تر ستون actor را ندارند — یک‌بار اضافه می‌شود.
+  try {
+    db.exec('ALTER TABLE change_log ADD COLUMN actor TEXT')
+  } catch {
+    /* ستون از قبل وجود دارد */
+  }
   const row = stmt('SELECT value FROM meta WHERE key = ?').get('site') as { value?: string } | undefined
   if (!row || row.value !== siteKey) {
     wipeStore()
@@ -315,6 +322,13 @@ export function finishSync(
 const CHANGE_LIMIT = 5000
 let changeInserts = 0
 
+/** کارشناسِ فعالِ این گذر سینک — هر تغییرِ ثبت‌شده با همین نام مهر می‌خورد. */
+let currentActor: string | null = null
+
+export function setChangeActor(label: string | null): void {
+  currentActor = label
+}
+
 function addChange(
   entity: SyncEntity,
   entityId: number,
@@ -323,8 +337,8 @@ function addChange(
   details = '',
 ): void {
   stmt(
-    'INSERT INTO change_log (entity, entity_id, change_type, summary, details, ts) VALUES (?, ?, ?, ?, ?, ?)',
-  ).run(entity, entityId, changeType, summary, details, Date.now())
+    'INSERT INTO change_log (entity, entity_id, change_type, summary, details, actor, ts) VALUES (?, ?, ?, ?, ?, ?, ?)',
+  ).run(entity, entityId, changeType, summary, details, currentActor, Date.now())
   changeInserts += 1
   if (changeInserts >= 500) {
     changeInserts = 0
@@ -358,6 +372,7 @@ export function listSyncChanges(q: SyncChangeQuery = {}): SyncChangeResult {
     change_type: string
     summary: string
     details: string
+    actor: string | null
     ts: number
   }>
   const entries: SyncChangeEntry[] = rows.map((r) => ({
@@ -367,6 +382,7 @@ export function listSyncChanges(q: SyncChangeQuery = {}): SyncChangeResult {
     changeType: r.change_type as SyncChangeType,
     summary: r.summary,
     details: r.details,
+    actor: r.actor ?? null,
     ts: Number(r.ts),
   }))
   return { entries, total: Number(totalRow.c), page, perPage }

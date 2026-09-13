@@ -366,6 +366,7 @@ function StoreChanges() {
                   <th>نوع</th>
                   <th>تغییر</th>
                   <th>جزئیات</th>
+                  <th>لحاظ‌شده توسط</th>
                 </tr>
               </thead>
               <tbody>
@@ -386,6 +387,7 @@ function StoreChanges() {
                         <span className="log-details"> — {faNum(e.entityId)}</span>
                       </td>
                       <td className="log-details">{e.details}</td>
+                      <td className="log-actor">{e.actor ?? '—'}</td>
                     </tr>
                   )
                 })}

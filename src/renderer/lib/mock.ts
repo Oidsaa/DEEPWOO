@@ -799,12 +799,12 @@ const MOCK_LOG: ChangeLogEntry[] = [
 
 /** Demo rows of the «تغییرات فروشگاه» log (detected during background syncs). */
 const MOCK_SYNC_CHANGES: SyncChangeEntry[] = [
-  { id: 12, entity: 'orders', entityId: 10431, changeType: 'created', summary: 'سفارش جدید: #10431', details: 'سارا موسوی • ۱۲۵۰۰۰۰ تومان', ts: Date.now() - 4 * 60_000 },
-  { id: 11, entity: 'orders', entityId: 10429, changeType: 'status_changed', summary: 'تغییر وضعیت سفارش #10429', details: 'در حال انجام ← انجام شده', ts: Date.now() - 26 * 60_000 },
-  { id: 10, entity: 'products', entityId: 471, changeType: 'updated', summary: 'بروزرسانی محصول: کیف چرم دست‌دوز', details: 'موجودی و قیمت به‌روزرسانی شد', ts: Date.now() - 52 * 60_000 },
-  { id: 9, entity: 'customers', entityId: 812, changeType: 'created', summary: 'مشتری جدید: حسین امیری', details: '', ts: Date.now() - 3 * 3_600_000 },
-  { id: 8, entity: 'orders', entityId: 10428, changeType: 'updated', summary: 'بروزرسانی سفارش #10428', details: 'اقلام سفارش تغییر کرد', ts: Date.now() - 5 * 3_600_000 },
-  { id: 7, entity: 'products', entityId: 503, changeType: 'status_changed', summary: 'تغییر وضعیت محصول: شال بافت زمستانی', details: 'انتشار ← پیش‌نویس', ts: Date.now() - 8 * 3_600_000 },
+  { id: 12, entity: 'orders', entityId: 10431, changeType: 'created', summary: 'سفارش جدید: #10431', details: 'سارا موسوی • ۱۲۵۰۰۰۰ تومان', actor: 'مدیر فروشگاه', ts: Date.now() - 4 * 60_000 },
+  { id: 11, entity: 'orders', entityId: 10429, changeType: 'status_changed', summary: 'تغییر وضعیت سفارش #10429', details: 'در حال انجام ← انجام شده', actor: 'مدیر فروشگاه', ts: Date.now() - 26 * 60_000 },
+  { id: 10, entity: 'products', entityId: 471, changeType: 'updated', summary: 'بروزرسانی محصول: کیف چرم دست‌دوز', details: 'موجودی و قیمت به‌روزرسانی شد', actor: 'مدیر فروشگاه', ts: Date.now() - 52 * 60_000 },
+  { id: 9, entity: 'customers', entityId: 812, changeType: 'created', summary: 'مشتری جدید: حسین امیری', details: '', actor: 'مدیر فروشگاه', ts: Date.now() - 3 * 3_600_000 },
+  { id: 8, entity: 'orders', entityId: 10428, changeType: 'updated', summary: 'بروزرسانی سفارش #10428', details: 'اقلام سفارش تغییر کرد', actor: 'مدیر فروشگاه', ts: Date.now() - 5 * 3_600_000 },
+  { id: 7, entity: 'products', entityId: 503, changeType: 'status_changed', summary: 'تغییر وضعیت محصول: شال بافت زمستانی', details: 'انتشار ← پیش‌نویس', actor: null, ts: Date.now() - 8 * 3_600_000 },
 ]
 
 export const mockApi: ApiBridge = {

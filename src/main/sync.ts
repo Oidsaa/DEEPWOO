@@ -22,6 +22,7 @@ import {
   finishSync,
   getSyncRow,
   replaceVariationsOf,
+  setChangeActor,
   upsertCustomer,
   upsertOrder,
   upsertProduct,
@@ -210,11 +211,20 @@ function runEntity(entity: SyncEntity): Promise<void> {
   const existing = inflight.get(entity)
   if (existing) return existing
   lastAttempt.set(entity, Date.now())
-  const p = syncEntity(getSettings(), entity).finally(() => {
+  const s = getSettings()
+  // هر تغییری که این گذر کشف می‌کند به نام کارشناسِ فعالِ همین لحظه ثبت می‌شود.
+  setChangeActor(actorOf(s))
+  const p = syncEntity(s, entity).finally(() => {
     inflight.delete(entity)
   })
   inflight.set(entity, p)
   return p
+}
+
+/** برچسب اکانت فعال (صاحب کلید) — مهرِ «تغییرات فروشگاه». */
+function actorOf(s: Settings): string | null {
+  const act = s.accounts?.find((a) => a.id === s.activeAccountId) ?? s.accounts?.[0]
+  return act?.label ?? s.userName ?? null
 }
 
 function intervalsOf(s: Settings): Record<SyncEntity, number> {
