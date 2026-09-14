@@ -476,6 +476,8 @@ export interface OrderPayload {
   coupon_lines?: Array<{ code: string }>
   /** Extra shipping line (هزینهٔ ارسال سفارش‌های ارسالی ثبت‌شده در برنامه). */
   shipping_lines?: Array<{ method_id?: string; method_title?: string; total?: string }>
+  /** Raw site metas (e.g. the buyer-SMS notify flags of the پیامک ووکامرس plugin). */
+  meta_data?: Array<{ key: string; value: unknown }>
 }
 
 /** Payload for updating an existing order's line items and addresses.
@@ -493,6 +495,8 @@ export interface OrderUpdatePayload {
   }>
   billing?: Partial<Order['billing']>
   shipping?: Partial<NonNullable<Order['shipping']>>
+  /** Site metas to upsert (existing ones must carry their `id` to update in place). */
+  meta_data?: Array<{ id?: number; key: string; value: unknown }>
 }
 
 /** Document handed to the main process for BULK printing (one big HTML doc). */

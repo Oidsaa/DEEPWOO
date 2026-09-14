@@ -265,6 +265,29 @@ async function adaptOrderStates(
   if (isCode(s)) payload!.shipping!.state = resolve(s)!
 }
 
+/**
+ * پلاگین «پیامک ووکامرس» (PWSMS) پیامکِ وضعیتِ مشتری را به متاهای سفارش گره زده
+ * که فقط تیکِ آگاهی در سبد خرید/پنل مدیریت ستشان می‌کند — سفارش‌های ثبت‌شده از اپ
+ * بدون آن‌ها بی‌صدا از پیامک جا می‌مانند. پاسخِ null یعنی متاها از قبل کامل‌اند.
+ */
+function buyerSmsMetaPatch(order: Order, status: string): Array<{ id?: number; key: string; value: unknown }> | null {
+  const md = order.meta_data ?? []
+  const notifyMeta = md.find((m) => m.key === '_buyer_sms_notify')
+  const statusMeta = md.find((m) => m.key === '_buyer_sms_status')
+  const rawList = statusMeta?.value
+  const list: string[] = Array.isArray(rawList) ? rawList.map(String) : []
+  const patch: Array<{ id?: number; key: string; value: unknown }> = []
+  if (!notifyMeta?.value) patch.push({ key: '_buyer_sms_notify', value: 'yes' })
+  if (!list.includes(status)) {
+    patch.push(
+      statusMeta
+        ? { id: statusMeta.id, key: statusMeta.key, value: [...list, status] }
+        : { key: '_buyer_sms_status', value: [status] },
+    )
+  }
+  return patch.length ? patch : null
+}
+
 /** برچسب اکانت فعال — هویت کارشناس در سطح برنامه (چند کلید می‌توانند یک کاربر سایت باشند). */
 function activeAccountLabel(): string | null {
   const s = getSettings()
@@ -684,32 +707,79 @@ function registerIpc(): void {
   ipcMain.handle('wc:order-create', async (_event, payload: OrderPayload) => {
     const cfg = requireConfig()
     await adaptOrderStates(cfg, payload)
-    const result = await createOrder(cfg, payload ?? { line_items: [] })
-    upsertOrder(result, { silent: true })
+    // پنل‌های پیامک/ایمیل سایت به «تغییر وضعیت» هوک می‌شوند؛ سفارشی که مستقیم با
+    // وضعیت نهایی از REST ساخته شود هیچ گذر وضعیتی ندارد و پیامک نمی‌خورد. مثل
+    // پنل مدیریت: اول «در انتظار پرداخت» ساخته می‌شود، بعد وضعیت واقعی روی آن
+    // گذاشته می‌شود. set_paid هم از ساخت حذف می‌شود چون با وضعیت نهایی هرگز به
+    // payment_complete نمی‌رسد و بی‌اثر است — در غیر این صورت با pending سفارش را
+    // به processing می‌برد و دو پیامک می‌فرستد.
+    const finalStatus = String(payload?.status ?? '').trim()
+    const createBody: OrderPayload = { ...(payload ?? { line_items: [] }) }
+    if (finalStatus) {
+      createBody.status = 'pending'
+      // تیکِ «مرا با ارسال پیامک از وضعیت سفارش آگاه کن» برای مشتری سفارش‌های اپ —
+      // همان متاهایی که سبد خرید/پنل مدیریت برای PWSMS ست می‌کند.
+      createBody.meta_data = [
+        ...(payload?.meta_data ?? []),
+        { key: '_buyer_sms_notify', value: 'yes' },
+        { key: '_buyer_sms_status', value: [finalStatus] },
+      ]
+    }
+    delete createBody.set_paid
+    let order = await createOrder(cfg, createBody)
+    if (finalStatus && order.status !== finalStatus) {
+      let applied: Order | null = null
+      let lastErr: unknown = null
+      for (let attempt = 0; attempt < 3 && !applied; attempt++) {
+        if (attempt > 0) await new Promise((r) => setTimeout(r, 800 * attempt))
+        try {
+          applied = await updateOrderStatus(cfg, Number(order.id), finalStatus)
+        } catch (err) {
+          lastErr = err
+        }
+      }
+      if (!applied) {
+        upsertOrder(order, { silent: true })
+        logAction(
+          'orders',
+          'order-status',
+          'اعمال وضعیت سفارش سریع ناموفق ماند — سفارش ساخته شد',
+          `#${order.number ?? order.id} • ${faStatus(finalStatus)}`,
+          '#' + order.id,
+        )
+        throw new Error(
+          `سفارش #${order.number ?? order.id} در سایت ثبت شد اما اعمال وضعیت «${faStatus(finalStatus)}» ناموفق ماند` +
+            (lastErr instanceof Error ? ` — ${lastErr.message}` : '') +
+            '؛ در سفارش‌ها وضعیت آن را دستی درست کنید.',
+        )
+      }
+      order = applied
+    }
+    upsertOrder(order, { silent: true })
     // نام غنی‌شده (از جدول مشتریان انبار) به پاسخ بچسبد تا رسید سفارش سریع آن را نشان دهد.
-    const enriched = getOrderById(Number(result.id))
-    if (enriched) result.customer_name = enriched.customer_name
+    const enriched = getOrderById(Number(order.id))
+    if (enriched) order.customer_name = enriched.customer_name
     logAction(
       'orders',
       'order-create',
-      'ثبت سفارش سریع #' + (result.number ?? result.id),
+      'ثبت سفارش سریع #' + (order.number ?? order.id),
       [
-        result.customer_name || [result.billing?.first_name, result.billing?.last_name].filter(Boolean).join(' ').trim(),
-        result.total ? result.total + ' ' + (await storeCurrencyLabel()) : '',
+        order.customer_name || [order.billing?.first_name, order.billing?.last_name].filter(Boolean).join(' ').trim(),
+        order.total ? order.total + ' ' + (await storeCurrencyLabel()) : '',
       ]
         .filter(Boolean)
         .join(' • '),
-      '#' + result.id,
-      Number(result.total) || 0,
+      '#' + order.id,
+      Number(order.total) || 0,
     )
 
     // سفارش سریعِ حضوری (sale-hazouri) بلافاصله در انبارِ سفارش‌سریع تخصیص
     // می‌خورد؛ سفارش‌های آنلاین منتظر وضعیتِ انباردار می‌مانند.
-    if (result.status === 'sale-hazouri') {
+    if (order.status === 'sale-hazouri') {
       const quick = activeWarehouses(cfg).find((w) => w.quickOrder)
       if (quick) {
         try {
-          const allocated = await allocateOrder(cfg, cfg, result, quick.id)
+          const allocated = await allocateOrder(cfg, cfg, order, quick.id)
           if (allocated) {
             upsertOrder(allocated, { silent: true })
             invalidateStockDependents()
@@ -717,11 +787,11 @@ function registerIpc(): void {
           }
         } catch (err) {
           // تخصیص حیاتی نیست — گذرگاه آشتی‌گیری بعداً دوباره تلاش می‌کند.
-          console.warn('warehouse allocation failed for order', result.id, err)
+          console.warn('warehouse allocation failed for order', order.id, err)
         }
       }
     }
-    return result
+    return order
   })
 
   ipcMain.handle('wc:coupon-get', async (_event, code: string) => {
@@ -816,6 +886,14 @@ function registerIpc(): void {
   ipcMain.handle('wc:order-status', async (_event, orderId: number, status: string) => {
     const cfg = requireConfig()
     let result = await updateOrderStatus(cfg, orderId, status)
+    // متاهای آگاهیِ پیامک مشتری را هم کامل کن (سفارش‌های اپ آن‌ها را از بدو ندارند).
+    try {
+      const smsPatch = buyerSmsMetaPatch(result, status)
+      if (smsPatch) result = await updateOrder(cfg, orderId, { line_items: [], meta_data: smsPatch })
+    } catch (err) {
+      // تغییر وضعیت خودش انجام شده — نبودِ پیامک حیاتی نیست.
+      console.warn('buyer sms meta patch failed for order', orderId, err)
+    }
     upsertOrder(result, { silent: true })
 
     // تخصیص/برگشت انبار بلافاصله پس از تغییر وضعیت در همین دستگاه.
