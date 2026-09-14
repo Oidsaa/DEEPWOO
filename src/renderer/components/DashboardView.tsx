@@ -154,18 +154,17 @@ function recentJalaliMonths(nowD: Date): Array<{ label: string; startMs: number;
 }
 
 /**
- * آمار سفارش‌های دستیِ خود کارشناس — مجموع کل + به تفکیک سه ماه اخیر شمسی.
- * لاگ بیش از سقف ۲۵ صفحه (۵۰۰۰ ردیف) که شد، قدیمی‌ترین‌ها در آمار کل دیده نمی‌شوند.
+ * آمار سفارش‌های دستیِ خود کارشناس — به تفکیک سه ماه اخیر شمسی. لاگ نزولی است و
+ * چون فقط سه ماه اخیر لازم است، با قدیمی‌ترشدنِ ردیف‌ها از سه ماه، صفحات بعدی
+ * خوانده نمی‌شوند.
  */
 async function myOrderStats(user: string): Promise<{
-  count: number
-  sum: number
   months: Array<{ label: string; count: number; sum: number }>
   error: string | null
 }> {
   const buckets = recentJalaliMonths(new Date())
   const months = buckets.map((b) => ({ label: b.label, count: 0, sum: 0 }))
-  let sum = 0
+  const oldestStart = buckets[buckets.length - 1].startMs
   try {
     const first = await api.getChangeLog({ user, section: 'orders', action: 'order-create', page: 1, perPage: 200 })
     const pages: ChangeLogEntry[][] = [first.entries]
@@ -173,11 +172,11 @@ async function myOrderStats(user: string): Promise<{
     for (let p = 2; p <= totalPages; p++) {
       const r = await api.getChangeLog({ user, section: 'orders', action: 'order-create', page: p, perPage: 200 })
       pages.push(r.entries)
+      if (r.entries.length && r.entries[r.entries.length - 1].ts < oldestStart) break
     }
     for (const entries of pages) {
       for (const e of entries) {
         const amount = typeof e.amount === 'number' ? e.amount : 0
-        sum += amount
         months.forEach((m, i) => {
           if (e.ts >= buckets[i].startMs && e.ts < buckets[i].endMs) {
             m.count += 1
@@ -186,9 +185,9 @@ async function myOrderStats(user: string): Promise<{
         })
       }
     }
-    return { count: first.total, sum, months, error: null }
+    return { months, error: null }
   } catch (err) {
-    return { count: 0, sum: 0, months, error: err instanceof Error ? err.message : String(err) }
+    return { months, error: err instanceof Error ? err.message : String(err) }
   }
 }
 
@@ -197,7 +196,7 @@ export default function DashboardView({ configured, conn, storeName, userName, o
   const [now, setNow] = useState(() => new Date())
   const [recent, setRecent] = useState<ChangeLogEntry[] | null>(null)
   const [stats, setStats] = useState<Awaited<ReturnType<typeof myOrderStats>> | null>(null)
-  const [monthSel, setMonthSel] = useState(-1)
+  const [monthSel, setMonthSel] = useState(0)
   const seq = useRef(0)
 
   // ساعت زنده — هر ثانیه تیک می‌خورد (زمان محلی دستگاه، همگام با ساعت ایران).
@@ -237,12 +236,10 @@ export default function DashboardView({ configured, conn, storeName, userName, o
   const dateLabel = jalaliLabel(now)
   const occ = occasionOf(now)
 
-  // آمارِ کارت‌ها به بازهٔ انتخابی فیلتر ماه وابسته است (−۱ = کل زمان).
+  // آمارِ کارت‌ها به ماهِ انتخاب‌شده از سه ماه اخیر وابسته است.
   const shown =
     stats && !stats.error && stats.months[monthSel]
-      ? monthSel === -1
-        ? { count: stats.count, sum: stats.sum }
-        : stats.months[monthSel]
+      ? stats.months[monthSel]
       : { count: 0, sum: 0 }
 
   return (
@@ -287,13 +284,6 @@ export default function DashboardView({ configured, conn, storeName, userName, o
           <div className="panel dash-stats">
             {stats && !stats.error && userName ? (
               <div className="theme-seg">
-                <button
-                  type="button"
-                  className={'theme-opt' + (monthSel === -1 ? ' active' : '')}
-                  onClick={() => setMonthSel(-1)}
-                >
-                  مجموع
-                </button>
                 {stats.months.map((m, i) => (
                   <button
                     key={m.label}
