@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: WC App Change Log
- * Description: جدول لاگ تغییرات مشترک برای داشبورد دسکتاپ ووکامرس — ثبت و خواندن اکشن کارشناس‌ها از طریق REST، با احراز هویت کلیدهای API ووکامرس (OAuth 1.0a یا query-string). نام کارشناس از صاحب کلید API خوانده می‌شود.
- * Version: 1.1.0
+ * Description: جدول لاگ تغییرات مشترک برای داشبورد دسکتاپ ووکامرس — ثبت و خواندن اکشن کارشناس‌ها از طریق REST، با احراز هویت کلیدهای API ووکامرس (OAuth 1.0a یا query-string). نام کارشناس از صاحب کلید API خوانده می‌شود؛ اکشن‌های مدیران از پنل مدیریت وردپرس هم ثبت می‌شود.
+ * Version: 1.2.0
  * Requires PHP: 7.2
  * Author: DEEPWOO
  */
@@ -23,6 +23,17 @@ class WcAppChangeLog {
 		add_action( 'init', [ __CLASS__, 'maybe_install' ] );
 		add_action( 'rest_api_init', [ __CLASS__, 'register_routes' ] );
 		add_action( 'wcapp_log_prune', [ __CLASS__, 'prune' ] );
+
+		// اکشن‌های مدیران از پنل مدیریت وردپرس (wp-admin) — با نام خودِ مدیر.
+		if ( apply_filters( 'wcapp_log_admin_actions_enabled', true ) ) {
+			add_action( 'woocommerce_new_product', [ __CLASS__, 'log_admin_product_create' ], 10, 2 );
+			add_action( 'woocommerce_update_product', [ __CLASS__, 'log_admin_product_update' ], 10, 2 );
+			add_action( 'woocommerce_new_order', [ __CLASS__, 'log_admin_order_create' ], 10, 2 );
+			add_action( 'woocommerce_order_status_changed', [ __CLASS__, 'log_admin_order_status' ], 10, 4 );
+			add_action( 'woocommerce_update_order', [ __CLASS__, 'log_admin_order_update' ], 10, 2 );
+			add_action( 'user_register', [ __CLASS__, 'log_admin_user_register' ], 10, 2 );
+			add_action( 'profile_update', [ __CLASS__, 'log_admin_profile_update' ], 10, 2 );
+		}
 
 		if ( ! wp_next_scheduled( 'wcapp_log_prune' ) ) {
 			wp_schedule_event( time() + HOUR_IN_SECONDS, 'daily', 'wcapp_log_prune' );
@@ -78,6 +89,168 @@ class WcAppChangeLog {
 		}
 		$cutoff = ( time() - $days * DAY_IN_SECONDS ) * 1000;
 		$wpdb->query( $wpdb->prepare( 'DELETE FROM ' . self::table() . ' WHERE ts < %d', $cutoff ) );
+	}
+
+	/* ---------------------------------------------------------------------
+	 * اکشن‌های پنل مدیریت (wp-admin) — ثبت با نام خودِ مدیر
+	 *
+	 * فقط تغییراتی ثبت می‌شود که کاربرِ واردشده دسترسی manage_woocommerce
+	 * داشته باشد (مدیر کل / مدیر فروشگاه). تغییرات REST ثبت نمی‌شوند چون
+	 * برنامهٔ دسکتاپ خودش همان اکشن‌ها را با جزئیات کامل‌تر پوش می‌کند.
+	 * ------------------------------------------------------------------- */
+
+	/** آخرین سفارشی که در همین درخواست تغییر وضعیت داده شد — تا ردیف تکراری «ویرایش» ننویسیم. */
+	private static $status_changed_order = 0;
+
+	/** آیا این تغییر باید از پنل ثبت شود؟ (نه REST، و کاربر فعلی مدیر/کارشناس است) */
+	private static function is_admin_action() {
+		if ( defined( 'REST_REQUEST' ) && REST_REQUEST ) {
+			return false; // اکشن‌های برنامهٔ دسکتاپ — خود برنامه ثبت می‌کند.
+		}
+		if ( ! is_user_logged_in() || ! current_user_can( 'manage_woocommerce' ) ) {
+			return false; // مشتری، ناشناس یا نقش بدون دسترسی فروشگاه.
+		}
+		return true;
+	}
+
+	/** درج یک ردیف اکشن پنل مدیریت با هویت کاربر فعلی. */
+	private static function insert_admin_entry( $section, $action, $title, $details = '', $target = '' ) {
+		global $wpdb;
+
+		$user   = wp_get_current_user();
+		$user   = $user->exists() ? $user : null;
+		$name   = $user ? ( $user->display_name ? $user->display_name : $user->user_login ) : '';
+		$now_ms = (int) round( microtime( true ) * 1000 );
+
+		$wpdb->insert(
+			self::table(),
+			[
+				'ts'        => $now_ms,
+				'created'   => gmdate( 'Y-m-d H:i:s' ),
+				'user_id'   => $user ? (int) $user->ID : 0,
+				'user_name' => $name,
+				'device'    => 'پنل مدیریت',
+				'section'   => $section,
+				'action'    => $action,
+				'title'     => self::clean( $title, 255 ),
+				'amount'    => 0,
+				'details'   => self::clean( $details, 5000 ),
+				'target'    => self::clean( $target, 191 ),
+			],
+			[ '%d', '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s' ]
+		);
+	}
+
+	/** برچسب وضعیت سفارش به فارسی/نام ثبت‌شدهٔ سایت (در صورت وجود ووکامرس). */
+	private static function order_status_label( $slug ) {
+		if ( function_exists( 'wc_get_order_status_name' ) ) {
+			$name = wc_get_order_status_name( $slug );
+			if ( $name && $name !== $slug ) {
+				return $name;
+			}
+		}
+		return (string) $slug;
+	}
+
+	public static function log_admin_product_create( $product_id, $product ) {
+		if ( ! self::is_admin_action() ) {
+			return;
+		}
+		self::insert_admin_entry(
+			'products',
+			'product-create',
+			'ایجاد محصول: ' . $product->get_name(),
+			'از پنل مدیریت وردپرس',
+			(string) $product->get_sku()
+		);
+	}
+
+	public static function log_admin_product_update( $product_id, $product ) {
+		if ( ! self::is_admin_action() ) {
+			return;
+		}
+		self::insert_admin_entry(
+			'products',
+			'product-update',
+			'ویرایش محصول: ' . $product->get_name(),
+			'از پنل مدیریت وردپرس',
+			(string) $product->get_sku()
+		);
+	}
+
+	public static function log_admin_order_create( $order_id, $order ) {
+		if ( ! self::is_admin_action() ) {
+			return;
+		}
+		self::insert_admin_entry(
+			'orders',
+			'order-create',
+			'ثبت سفارش #' . $order->get_order_number(),
+			'از پنل مدیریت وردپرس',
+			(string) $order_id
+		);
+	}
+
+	public static function log_admin_order_status( $order_id, $from, $to, $order ) {
+		if ( ! self::is_admin_action() ) {
+			return;
+		}
+		self::$status_changed_order = (int) $order_id;
+		self::insert_admin_entry(
+			'orders',
+			'order-status',
+			'تغییر وضعیت سفارش #' . $order->get_order_number(),
+			self::order_status_label( $from ) . ' → ' . self::order_status_label( $to ) . ' — از پنل مدیریت وردپرس',
+			(string) $order_id
+		);
+	}
+
+	public static function log_admin_order_update( $order_id, $order ) {
+		if ( ! self::is_admin_action() ) {
+			return;
+		}
+		// تغییر وضعیت در همین درخواست ثبت شده؛ ردیف تکراری «ویرایش» لازم نیست.
+		if ( self::$status_changed_order === (int) $order_id ) {
+			return;
+		}
+		self::insert_admin_entry(
+			'orders',
+			'order-update',
+			'ویرایش سفارش #' . $order->get_order_number(),
+			'از پنل مدیریت وردپرس',
+			(string) $order_id
+		);
+	}
+
+	public static function log_admin_user_register( $user_id, $user ) {
+		if ( ! self::is_admin_action() || ! $user instanceof WP_User ) {
+			return;
+		}
+		$roles = implode( '، ', (array) $user->roles );
+		self::insert_admin_entry(
+			'customers',
+			'user-create',
+			'ایجاد کاربر: ' . $user->user_login,
+			'نقش: ' . ( '' !== $roles ? $roles : '—' ) . ' — از پنل مدیریت وردپرس',
+			$user->user_email
+		);
+	}
+
+	public static function log_admin_profile_update( $user_id, $old_user_data ) {
+		if ( ! self::is_admin_action() ) {
+			return;
+		}
+		$user = get_userdata( $user_id );
+		if ( ! $user ) {
+			return;
+		}
+		self::insert_admin_entry(
+			'customers',
+			'user-update',
+			'ویرایش پروفایل: ' . $user->user_login,
+			'از پنل مدیریت وردپرس',
+			$user->user_email
+		);
 	}
 
 	/* ---------------------------------------------------------------------

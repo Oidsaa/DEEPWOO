@@ -1062,6 +1062,7 @@ export const mockApi: ApiBridge = {
         productId,
         variationId,
         name,
+        stockStatus: node.stock_status,
         productName,
         sku: node.sku || undefined,
         imageUrl,

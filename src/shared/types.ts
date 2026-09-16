@@ -636,6 +636,8 @@ export interface WarehouseItemState {
   variationId: number | null
   /** Product name (+ the combination label for variations). */
   name: string
+  /** WooCommerce stock status (instock / outofstock / onbackorder). */
+  stockStatus: string
   /** Parent product name — populated for variation rows. */
   productName?: string
   sku?: string

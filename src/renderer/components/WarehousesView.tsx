@@ -46,9 +46,44 @@ interface ProductRow {
   /** مجموع انبارهای ترکیب‌های ثبت‌شده. */
   sum: number | null
   status: 'unregistered' | 'mismatch' | 'ok'
-  /** موجودی سایت در حد نصاب «حد هشدار کمبود موجودی» تنظیمات یا ناموجود. */
+  /** At least one simple product / combination needs a stock warning. */
   lowStock: boolean
+  /** Number of combinations at or below the configured threshold (excluding out-of-stock). */
+  lowStockCombos: number
+  /** Number of combinations explicitly marked out of stock. */
+  outOfStockCombos: number
   items: WarehouseItemState[]
+}
+
+function isOutOfStock(item: WarehouseItemState): boolean {
+  return item.stockStatus === 'outofstock'
+}
+
+function isLowStock(item: WarehouseItemState, threshold: number): boolean {
+  return !isOutOfStock(item) && item.manageStock && item.siteStock !== null && item.siteStock <= threshold
+}
+
+/**
+ * Build the parent-row warning text from individual variation states. A
+ * variable product must not use the sum of its combinations: one empty
+ * combination is still an out-of-stock warning even when the parent total is
+ * large.
+ */
+function stockWarningLabel(
+  row: Pick<ProductRow, 'isVariable' | 'siteStock' | 'lowStockCombos' | 'outOfStockCombos'>,
+  simple: WarehouseItemState,
+  threshold: number,
+): string | null {
+  if (row.isVariable) {
+    const { lowStockCombos, outOfStockCombos } = row
+    if (lowStockCombos > 0 && outOfStockCombos > 0) return 'ناموجود و کمبود موجودی در تعدادی از ترکیبات'
+    if (outOfStockCombos > 0) return `ناموجود در ${faNum(outOfStockCombos)} ترکیب`
+    if (lowStockCombos > 0) return `کمبود موجودی در ${faNum(lowStockCombos)} ترکیب`
+    return null
+  }
+  if (isOutOfStock(simple)) return 'ناموجود'
+  if (isLowStock(simple, threshold) && row.siteStock !== null) return `کمبود موجودی (${faNum(row.siteStock)} عدد مانده)`
+  return null
 }
 
 export default function WarehousesView({ configured, conn, storeName, onGoSettings }: Props) {
@@ -142,6 +177,12 @@ export default function WarehousesView({ configured, conn, storeName, onGoSettin
       const hasMismatch = list.some((i) => i.delta !== null && i.delta !== 0)
       const siteVals = list.map((i) => i.siteStock).filter((v): v is number => typeof v === 'number')
       const sumVals = registered.map((i) => i.sum as number)
+      const lowStockCombos = isVariable
+        ? list.filter((i) => isLowStock(i, lowStockThreshold)).length
+        : isLowStock(first, lowStockThreshold)
+          ? 1
+          : 0
+      const outOfStockCombos = isVariable ? list.filter(isOutOfStock).length : isOutOfStock(first) ? 1 : 0
       const whRegistered: Record<string, number> = {}
       for (const id of whIds) {
         whRegistered[id] = list.filter((i) => typeof i.warehouseStock[id] === 'number').length
@@ -165,7 +206,9 @@ export default function WarehousesView({ configured, conn, storeName, onGoSettin
         whStock,
         sum: sumVals.length ? sumVals.reduce((a, b) => a + b, 0) : null,
         status: registered.length < list.length ? 'unregistered' : hasMismatch ? 'mismatch' : 'ok',
-        lowStock: siteVals.length ? siteVals.reduce((a, b) => a + b, 0) <= lowStockThreshold : false,
+        lowStock: lowStockCombos > 0 || outOfStockCombos > 0,
+        lowStockCombos,
+        outOfStockCombos,
         items: list,
       })
     }
@@ -479,6 +522,8 @@ export default function WarehousesView({ configured, conn, storeName, onGoSettin
                   <tbody>
                     {pageRows.map((p) => {
                       const simple = p.items[0]
+                      const stockWarning = stockWarningLabel(p, simple, lowStockThreshold)
+                      const stockWarningClass = p.outOfStockCombos > 0 ? 'pill-red' : 'pill-amber'
                       return (
                         <tr
                           key={p.productId}
@@ -584,13 +629,7 @@ export default function WarehousesView({ configured, conn, storeName, onGoSettin
                               ) : (
                                 <span className="pill pill-green">هماهنگ</span>
                               )}
-                              {p.lowStock && p.siteStock !== null && (
-                                <span className={'pill ' + (p.siteStock === 0 ? 'pill-red' : 'pill-amber')}>
-                                  {p.siteStock === 0
-                                    ? 'ناموجود'
-                                    : `کمبود موجودی (${faNum(p.siteStock)} عدد مانده)`}
-                                </span>
-                              )}
+                              {stockWarning && <span className={'pill ' + stockWarningClass}>{stockWarning}</span>}
                             </div>
                           </td>
                           <td>
