@@ -50,6 +50,21 @@ import { aggregateSalesReport, reportCountsToward, resolveReportWindow } from '.
 export type SyncEntity = 'orders' | 'products' | 'customers'
 export type UpsertOutcome = 'created' | 'updated' | 'unchanged'
 
+/**
+ * Site-registered order status names (slug → name) — fed from main via
+ * setStatusNames(). The app never renames statuses: when the site list has
+ * not arrived yet, shared/statusLabels is the fallback.
+ */
+let orderStatusNames: Record<string, string> = {}
+
+export function setStatusNames(map: Record<string, string>): void {
+  orderStatusNames = map
+}
+
+function statusFa(s: string): string {
+  return orderStatusNames[s] ?? faStatus(s)
+}
+
 /** Non-trash product statuses kept in the local catalog (listProducts scope). */
 export const PRODUCT_STATUSES = ['publish', 'draft', 'private', 'pending']
 
@@ -476,7 +491,7 @@ export function upsertOrder(o: Order, opts: { silent?: boolean } = {}): UpsertOu
     const label = '#' + (o.number || o.id)
     if (!row) addChange('orders', o.id, 'created', 'سفارش جدید: ' + label, r.name)
     else if (statusChanged)
-      addChange('orders', o.id, 'status_changed', 'تغییر وضعیت سفارش ' + label, faStatus(row.status) + ' ← ' + faStatus(o.status))
+      addChange('orders', o.id, 'status_changed', 'تغییر وضعیت سفارش ' + label, statusFa(row.status) + ' ← ' + statusFa(o.status))
     else addChange('orders', o.id, 'updated', 'بروزرسانی سفارش ' + label, r.name)
   }
   return row ? 'updated' : 'created'
@@ -935,7 +950,7 @@ export function statusTotals(): OrderStatusTotal[] {
   }>
   return rows
     .filter((r) => r.status && r.status !== 'trash')
-    .map((r) => ({ slug: r.status, name: faStatus(r.status), total: Number(r.c) }))
+    .map((r) => ({ slug: r.status, name: statusFa(r.status), total: Number(r.c) }))
     .sort((a, b) => b.total - a.total)
 }
 

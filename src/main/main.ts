@@ -21,6 +21,7 @@ import {
   wpUsersMe,
   getAuthUser,
   fetchCurrencyCode,
+  fetchOrderStatuses,
   createCustomer,
   createOrder,
   findCoupon,
@@ -51,6 +52,7 @@ import {
   productOrders,
   recentOrders,
   salesReport,
+  setStatusNames,
   statusTotals,
   storeStats,
   upsertCustomer,
@@ -72,6 +74,7 @@ import type {
   Order,
   OrderNotePayload,
   OrderPayload,
+  OrderStatusTotal,
   OrderUpdatePayload,
   PrintBulkDoc,
   PrintReceiptDoc,
@@ -422,6 +425,51 @@ function healGenericAccountLabels(): Promise<void> {
   return healLabelsRun
 }
 
+/* وضعیت‌های سفارش دقیقاً از سایت خوانده می‌شوند — برنامه هیچ وضعیتی از خودش
+   نمی‌سازد و نام هیچ وضعیتی را تغییر نمی‌دهد. منبع: /reports/orders/totals
+   (همان wc_get_order_statuses سایت، شامل وضعیت‌های اختصاصی افزونه‌ها). */
+let siteStatusNames: Record<string, string> = {}
+let siteStatusFetchedAt = 0
+const SITE_STATUS_TTL = 10 * 60 * 1000
+
+/** نام فارسی یک وضعیت: اول نام ثبت‌شدهٔ سایت، بعد برچسب شناخته‌شدهٔ برنامه. */
+function statusFa(s: string): string {
+  return siteStatusNames[s] ?? faStatus(s)
+}
+
+/** خواندن (و دردسترس‌گذاری به store) فهرست وضعیت‌های واقعی سایت؛ خطا بی‌صدا. */
+async function refreshOrderStatusNames(): Promise<void> {
+  const cfg = getSettings()
+  if (!cfg.siteUrl || !cfg.consumerKey || !cfg.consumerSecret) return
+  try {
+    const list = await fetchOrderStatuses(cfg)
+    const map: Record<string, string> = {}
+    for (const s of list) map[s.slug] = s.name
+    siteStatusNames = map
+    siteStatusFetchedAt = Date.now()
+    setStatusNames(map)
+  } catch {
+    /* سایت در دسترس نیست — نام‌های فعلی می‌مانند */
+  }
+}
+
+/** ادغام شمارش محلی با فهرست واقعی سایت: نام از سایت، تعداد از مخزن محلی. */
+function mergedStatusTotals(): OrderStatusTotal[] {
+  const local = statusTotals()
+  const slugs = Object.keys(siteStatusNames)
+  if (slugs.length === 0) return local
+  const totals = new Map(local.map((s) => [s.slug, s.total]))
+  const seen = new Set<string>()
+  const merged: OrderStatusTotal[] = []
+  for (const slug of slugs) {
+    seen.add(slug)
+    merged.push({ slug, name: siteStatusNames[slug], total: totals.get(slug) ?? 0 })
+  }
+  // وضعیت‌های محلیِ خارج از فهرست سایت (سایت موقتاً در دسترس نبوده) حذف نمی‌شوند.
+  for (const s of local) if (!seen.has(s.slug)) merged.push(s)
+  return merged
+}
+
 function registerIpc(): void {
   ipcMain.handle('settings:get', () => getSettings())
 
@@ -744,11 +792,11 @@ function registerIpc(): void {
           'orders',
           'order-status',
           'اعمال وضعیت سفارش سریع ناموفق ماند — سفارش ساخته شد',
-          `#${order.number ?? order.id} • ${faStatus(finalStatus)}`,
+          `#${order.number ?? order.id} • ${statusFa(finalStatus)}`,
           '#' + order.id,
         )
         throw new Error(
-          `سفارش #${order.number ?? order.id} در سایت ثبت شد اما اعمال وضعیت «${faStatus(finalStatus)}» ناموفق ماند` +
+          `سفارش #${order.number ?? order.id} در سایت ثبت شد اما اعمال وضعیت «${statusFa(finalStatus)}» ناموفق ماند` +
             (lastErr instanceof Error ? ` — ${lastErr.message}` : '') +
             '؛ در سفارش‌ها وضعیت آن را دستی درست کنید.',
         )
@@ -853,7 +901,9 @@ function registerIpc(): void {
       return []
     }
     await ensureSynced('orders')
-    return statusTotals()
+    // فهرست وضعیت‌ها از سایت تازه شود (TTL کوتاه) تا نام‌ها همیشه واقعی بمانند.
+    if (Date.now() - siteStatusFetchedAt > SITE_STATUS_TTL) void refreshOrderStatusNames()
+    return mergedStatusTotals()
   })
 
   ipcMain.handle('wc:order-notes', async (_event, orderId: number) => {
@@ -910,7 +960,7 @@ function registerIpc(): void {
         console.warn('warehouse allocation failed for order', orderId, err)
       }
     }
-    logAction('orders', 'order-status', `تغییر وضعیت سفارش #${orderId}`, 'وضعیت جدید: ' + faStatus(status), '#' + orderId)
+    logAction('orders', 'order-status', `تغییر وضعیت سفارش #${orderId}`, 'وضعیت جدید: ' + statusFa(status), '#' + orderId)
     // ووکامرس با تغییر وضعیت موجودی را کم/زیاد کرده — انبارها خودکار تازه شوند.
     invalidateStockDependents()
     return result
@@ -938,7 +988,7 @@ function registerIpc(): void {
     const detail =
       payload.line_items.length + ' قلم' +
       (payload.billing || payload.shipping ? ' · آدرس به‌روزرسانی شد' : '') +
-      (dance ? ' · وضعیت: ' + faStatus(result.status) : '')
+      (dance ? ' · وضعیت: ' + statusFa(result.status) : '')
     logAction('orders', 'order-update', `ویرایش سفارش #${orderId}`, detail, '#' + orderId)
     // رقصِ وضعیتِ ویرایش موجودی سایت را جابه‌جا کرده — انبارها تازه شوند.
     invalidateStockDependents()
@@ -1045,6 +1095,7 @@ app.whenReady().then(() => {
   void resolveUserName()
   // برچسب‌های عمومی اکانت‌ها («کارشناس اصلی») را از نام واقعی صاحب کلیدها بازساز.
   void healGenericAccountLabels()
+  void refreshOrderStatusNames()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

@@ -3,7 +3,8 @@ import type { ConnState, Coupon, Customer, Order, Product, ProductVariation } fr
 import { IR_PROVINCES } from '../../shared/iran'
 import { api, isMock } from '../api'
 import { normalizePhone } from '../../shared/phone'
-import { avatarPalette, faDate, faDigits, faNum, orderStatusMeta } from '../lib/format'
+import { avatarPalette, faDate, faDigits, faNum } from '../lib/format'
+import { statusFa } from '../lib/orderStatuses'
 import { useCurrency } from '../lib/currency'
 import { useSyncRefresh } from '../lib/liveSync'
 import ReceiptModal from './ReceiptModal'
@@ -1037,7 +1038,7 @@ export default function QuickOrderView({ configured, conn, storeName, onGoSettin
             style={{ alignSelf: 'center' }}
             title="وضعیتی که سفارش با آن ثبت می‌شود"
           >
-            {delivery === 'inperson' ? 'فروش حضوری' : orderStatusMeta('processing').fa}
+            {delivery === 'inperson' ? statusFa('sale-hazouri') : statusFa('processing')}
           </span>
         </div>
         <button type="button" className="btn btn-primary qo-submit" onClick={submit} disabled={submitting || !configured}>
@@ -1068,7 +1069,7 @@ export default function QuickOrderView({ configured, conn, storeName, onGoSettin
             {created.customer_name ||
               [created.billing?.first_name, created.billing?.last_name].filter(Boolean).join(' ') ||
               '—'}
-            » ثبت شد ({orderStatusMeta(created.status).fa}، {faDate(created.date_created)}).
+            » ثبت شد ({statusFa(created.status)}، {faDate(created.date_created)}).
           </div>
           <button type="button" className="btn btn-primary btn-sm" onClick={() => setReceiptOrder(created)}>
             <IconPrint size={14} /> چاپ رسید فروشگاه

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { ConnState, Product, ProductsResult } from '../../shared/types'
 import { api, isMock } from '../api'
@@ -10,6 +10,8 @@ import { lastStoreSync } from '../lib/syncStamp'
 import AddProductModal from './AddProductModal'
 import BulkPriceModal from './BulkPriceModal'
 import BulkStockModal from './BulkStockModal'
+import GroupPriceModal from './GroupPriceModal'
+import GroupStockModal from './GroupStockModal'
 import ProductDetailModal from './ProductDetailModal'
 import ProductOrdersModal from './ProductOrdersModal'
 import WarehouseStockModal from './WarehouseStockModal'
@@ -17,6 +19,7 @@ import {
   IconAlert,
   IconBag,
   IconBox,
+  IconCheck,
   IconEye,
   IconGear,
   IconLayers,
@@ -117,6 +120,9 @@ export default function ProductsView({ configured, conn, storeName, onGoSettings
   const [bulkPriceProduct, setBulkPriceProduct] = useState<Product | null>(null)
   const [bulkStockProduct, setBulkStockProduct] = useState<Product | null>(null)
   const [warehouseProduct, setWarehouseProduct] = useState<Product | null>(null)
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
+  const [groupPrice, setGroupPrice] = useState(false)
+  const [groupStock, setGroupStock] = useState(false)
   const [successFlash, setSuccessFlash] = useState<string | null>(null)
 
   useEffect(() => () => window.clearTimeout(debounceRef.current), [])
@@ -198,6 +204,34 @@ export default function ProductsView({ configured, conn, storeName, onGoSettings
   /** Clicking a segment widget filters the list to that group; clicking it again clears. */
   const toggleSegment = (v: string) =>
     setParams((p) => ({ ...p, stockStatus: p.stockStatus === v ? '' : v, page: 1 }))
+
+  const pageProducts = data?.products ?? []
+  const pageIds = pageProducts.map((p) => p.id)
+  const pageAllSelected = pageIds.length > 0 && pageIds.every((id) => selectedIds.has(id))
+  const pageSomeSelected = pageIds.some((id) => selectedIds.has(id))
+
+  const toggleOne = (id: number) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const togglePage = () => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (pageAllSelected) for (const id of pageIds) next.delete(id)
+      else for (const id of pageIds) next.add(id)
+      return next
+    })
+  }
+
+  const selectedProducts = useMemo(
+    () => (data?.products ?? []).filter((p) => selectedIds.has(p.id)),
+    [data, selectedIds],
+  )
 
   return (
     <div className="page fade-in">
@@ -375,6 +409,26 @@ export default function ProductsView({ configured, conn, storeName, onGoSettings
               </div>
             </div>
 
+            {selectedIds.size > 0 && (
+              <div className="sel-bar">
+                <IconCheck size={15} />
+                <span>
+                  <b>{faNum(selectedIds.size)}</b> محصول انتخاب شده
+                </span>
+                <button type="button" className="btn btn-sm btn-primary" onClick={() => setGroupPrice(true)}>
+                  <IconTag size={14} />
+                  تغییر قیمت گروهی
+                </button>
+                <button type="button" className="btn btn-sm btn-primary" onClick={() => setGroupStock(true)}>
+                  <IconLayers size={14} />
+                  تغییر موجودی گروهی
+                </button>
+                <button type="button" className="btn btn-sm btn-ghost" onClick={() => setSelectedIds(new Set())}>
+                  پاک کردن انتخاب
+                </button>
+              </div>
+            )}
+
             {error ? (
               <div className="empty">
                 <div className="empty-ic amber">
@@ -416,15 +470,27 @@ export default function ProductsView({ configured, conn, storeName, onGoSettings
               <div className="tbl-wrap">
                 <table className="tbl tbl-products" style={dimmed ? { opacity: 0.45 } : undefined}>
                   <colgroup>
-                    <col style={{ width: '32%' }} />
-                    <col style={{ width: '12%' }} />
-                    <col style={{ width: '12%' }} />
-                    <col style={{ width: '9%' }} />
+                    <col style={{ width: '4%' }} />
+                    <col style={{ width: '28%' }} />
+                    <col style={{ width: '11%' }} />
+                    <col style={{ width: '11%' }} />
+                    <col style={{ width: '8%' }} />
                     <col style={{ width: '14%' }} />
-                    <col style={{ width: '21%' }} />
+                    <col style={{ width: '24%' }} />
                   </colgroup>
                   <thead>
                     <tr>
+                      <th className="th-check">
+                        <input
+                          type="checkbox"
+                          aria-label="انتخاب همهٔ محصولات این صفحه"
+                          checked={pageAllSelected}
+                          ref={(el) => {
+                            if (el) el.indeterminate = !pageAllSelected && pageSomeSelected
+                          }}
+                          onChange={togglePage}
+                        />
+                      </th>
                       <th>محصول</th>
                       <th>قیمت</th>
                       <th>وضعیت</th>
@@ -438,6 +504,8 @@ export default function ProductsView({ configured, conn, storeName, onGoSettings
                       <ProductRow
                         key={p.id}
                         product={p}
+                        selected={selectedIds.has(p.id)}
+                        onToggle={() => toggleOne(p.id)}
                         onDetail={() => setDetailProduct(p)}
                         onOrders={() => setOrdersProduct(p)}
                         onBulkPrice={() => setBulkPriceProduct(p)}
@@ -532,12 +600,30 @@ export default function ProductsView({ configured, conn, storeName, onGoSettings
           onChanged={() => reloadView(setLoadCount)}
         />
       )}
+
+      {groupPrice && selectedProducts.length > 0 && (
+        <GroupPriceModal
+          products={selectedProducts}
+          onClose={() => setGroupPrice(false)}
+          onChanged={() => forceRefresh('products', setLoadCount, setSyncing)}
+        />
+      )}
+
+      {groupStock && selectedProducts.length > 0 && (
+        <GroupStockModal
+          products={selectedProducts}
+          onClose={() => setGroupStock(false)}
+          onChanged={() => forceRefresh('products', setLoadCount, setSyncing)}
+        />
+      )}
     </div>
   )
 }
 
 function ProductRow({
   product,
+  selected,
+  onToggle,
   onDetail,
   onOrders,
   onBulkPrice,
@@ -545,6 +631,8 @@ function ProductRow({
   onWarehouse,
 }: {
   product: Product
+  selected: boolean
+  onToggle: () => void
   onDetail: () => void
   onOrders: () => void
   onBulkPrice: () => void
@@ -559,7 +647,10 @@ function ProductRow({
   const pub = PUB_STATUS[product.status]
 
   return (
-    <tr>
+    <tr className={selected ? 'tr-active' : undefined}>
+      <td className="td-check">
+        <input type="checkbox" aria-label={`انتخاب محصول ${product.name}`} checked={selected} onChange={onToggle} />
+      </td>
       <td>
         <div className="cell-user">
           {firstImg && !imgBroken ? (
@@ -719,15 +810,17 @@ function SkeletonTable() {
     <div className="tbl-wrap">
       <table className="tbl tbl-products">
         <colgroup>
-          <col style={{ width: '32%' }} />
-          <col style={{ width: '12%' }} />
-          <col style={{ width: '12%' }} />
-          <col style={{ width: '9%' }} />
+          <col style={{ width: '4%' }} />
+          <col style={{ width: '28%' }} />
+          <col style={{ width: '11%' }} />
+          <col style={{ width: '11%' }} />
+          <col style={{ width: '8%' }} />
           <col style={{ width: '14%' }} />
-          <col style={{ width: '21%' }} />
+          <col style={{ width: '24%' }} />
         </colgroup>
         <thead>
           <tr>
+            <th className="th-check" />
             <th>محصول</th>
             <th>قیمت</th>
             <th>وضعیت</th>
@@ -739,6 +832,9 @@ function SkeletonTable() {
         <tbody>
           {Array.from({ length: 8 }, (_, i) => (
             <tr className="sk-row" key={i}>
+              <td>
+                <div className="sk sk-line" style={{ width: 16 }} />
+              </td>
               <td>
                 <div className="sk-cell-user">
                   <div className="sk sk-thumb" />

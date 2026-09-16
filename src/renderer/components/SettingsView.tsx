@@ -89,10 +89,13 @@ function statusOptions(site: OrderStatusTotal[] | null): Array<{ slug: string; l
   if (site) {
     return site.map((s) => ({
       slug: s.slug,
-      label: ORDER_STATUS_META[s.slug]?.fa ?? (s.name && s.name !== s.slug ? s.name : s.slug.replace(/-/g, ' ')),
+      label: (s.name && s.name !== s.slug ? s.name : '') || ORDER_STATUS_META[s.slug]?.fa || s.slug.replace(/-/g, ' '),
     }))
   }
-  return Object.entries(ORDER_STATUS_META).map(([slug, m]) => ({ slug, label: m.fa }))
+  // آفلاین: فقط وضعیت‌های هستهٔ ووکامرس — هیچ وضعیت ساختگی‌ای اضافه نمی‌شود.
+  return ['pending', 'processing', 'on-hold', 'completed', 'cancelled', 'refunded', 'failed']
+    .filter((slug) => ORDER_STATUS_META[slug])
+    .map((slug) => ({ slug, label: ORDER_STATUS_META[slug].fa }))
 }
 
 export default function SettingsView({ settings, conn, onSaved, onAccountsChanged }: Props) {
@@ -1399,6 +1402,31 @@ export default function SettingsView({ settings, conn, onSaved, onAccountsChange
               </button>
               <span className="f-hint" style={{ marginInlineStart: 10 }}>
                 حداکثر ۸ انبار
+              </span>
+            </div>
+
+            <div className="field">
+              <label className="lbl" htmlFor="lowStockThreshold">
+                حد هشدار کمبود موجودی
+              </label>
+              <input
+                id="lowStockThreshold"
+                className="input ltr"
+                dir="ltr"
+                type="text"
+                inputMode="numeric"
+                autoComplete="off"
+                style={{ maxWidth: 160 }}
+                value={form.lowStockThreshold !== undefined ? String(form.lowStockThreshold) : '5'}
+                onChange={(e) => {
+                  const v = toLatin(e.target.value).replace(/[^0-9]/g, '')
+                  set('lowStockThreshold', v === '' ? undefined : Math.min(9999, Math.max(1, Number(v))))
+                }}
+              />
+              <span className="f-hint">
+                محصولات مدیریت‌موجودی‌داری که موجودی‌شان کمتر یا مساوی این عدد باشد، در صفحهٔ «انبارها» برچسب «کمبود
+                موجودی» می‌گیرند (همین عدد مبنای تب «موجودی» گزارشات است). پیش‌فرض ۵. برای اعمال، «ذخیره تنظیمات» را
+                بزنید.
               </span>
             </div>
 

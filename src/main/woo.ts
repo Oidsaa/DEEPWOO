@@ -10,6 +10,7 @@ import type {
   OrderNote,
   OrderNotePayload,
   OrderPayload,
+  OrderStatusTotal,
   OrderUpdatePayload,
   Product,
   ProductDetail,
@@ -222,6 +223,34 @@ export async function fetchCurrencyCode(cfg: WooConfig): Promise<string | null> 
     /* read-only key or security plugin */
   }
   return null
+}
+
+/**
+ * Order statuses exactly as registered on the store — /reports/orders/totals
+ * mirrors wc_get_order_statuses(), so custom plugin statuses appear with
+ * their REAL Persian names. The app must never rename or invent statuses;
+ * this list is the single authoritative source.
+ */
+export async function fetchOrderStatuses(cfg: WooConfig): Promise<OrderStatusTotal[]> {
+  const { data } = await wooRequest<Array<{ slug?: string; name?: string; total?: string | number }>>(
+    cfg,
+    'GET',
+    '/reports/orders/totals',
+    {},
+    undefined,
+    'v3',
+    12000,
+  )
+  if (!Array.isArray(data)) throw new Error('فهرست وضعیت‌های سفارش از فروشگاه خوانده نشد.')
+  const list = data
+    .map((s) => ({
+      slug: String(s.slug ?? '').trim(),
+      name: String(s.name ?? '').trim(),
+      total: Number(s.total ?? 0) || 0,
+    }))
+    .filter((s) => s.slug && s.name)
+  if (list.length === 0) throw new Error('فهرست وضعیت‌های سفارش از فروشگاه خالی بود.')
+  return list
 }
 
 /**

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { AccountsSnapshot, ConnState, Settings, ViewId } from '../shared/types'
 import { api, bridgeMissing } from './api'
 import { applyAppearance } from './lib/theme'
+import { refreshOrderStatuses } from './lib/orderStatuses'
 import { DEMO_SETTINGS } from './lib/mock'
 import AccountPinModal from './components/AccountPinModal'
 import type { AccountPinMode, AccountPinSubmit, AccountPinTarget } from './components/AccountPinModal'
@@ -219,6 +220,13 @@ export default function App() {
     setView('customers')
   }, [settings?.theme, settings?.accentColor, settings?.storeLogo])
 
+  const configured = isConfigured(settings)
+
+  // نام وضعیت‌های سفارش همیشه از سایت — پس از اتصال (و هر تغییر اکانت) خوانده شود.
+  useEffect(() => {
+    if (configured) void refreshOrderStatuses()
+  }, [configured, conn.state, settings?.activeAccountId])
+
   if (bridgeMissing) {
     return (
       <div className="bridge-err">
@@ -236,7 +244,6 @@ export default function App() {
     )
   }
 
-  const configured = isConfigured(settings)
   /** Store name from «اطلاعات رسید» (Settings), shown across the UI. */
   const storeName = (settings?.storeName ?? '').trim() || null
   /** نام کارشناسِ فعال — اولویت با برچسب اکانتِ فعال؛ بدون اکانت‌ها، نام صاحب کلید.

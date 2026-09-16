@@ -17,12 +17,13 @@ interface Props {
 
 const PAGE_SIZE = 50
 
-type FilterKey = 'all' | 'mismatch' | 'unregistered' | 'ok'
+type FilterKey = 'all' | 'mismatch' | 'unregistered' | 'ok' | 'lowstock'
 
 const FILTERS: Array<{ key: FilterKey; fa: string }> = [
   { key: 'all', fa: 'همه' },
   { key: 'mismatch', fa: 'مغایرت‌دار' },
   { key: 'unregistered', fa: 'ثبت‌نشده' },
+  { key: 'lowstock', fa: 'کمبود موجودی' },
   { key: 'ok', fa: 'هماهنگ' },
 ]
 
@@ -45,6 +46,8 @@ interface ProductRow {
   /** مجموع انبارهای ترکیب‌های ثبت‌شده. */
   sum: number | null
   status: 'unregistered' | 'mismatch' | 'ok'
+  /** موجودی سایت در حد نصاب «حد هشدار کمبود موجودی» تنظیمات یا ناموجود. */
+  lowStock: boolean
   items: WarehouseItemState[]
 }
 
@@ -63,6 +66,8 @@ export default function WarehousesView({ configured, conn, storeName, onGoSettin
   const [page, setPage] = useState(1)
   const [stockProduct, setStockProduct] = useState<{ id: number; name: string } | null>(null)
   const [savedFlash, setSavedFlash] = useState(false)
+  /** «حد هشدار کمبود موجودی» تنظیمات — مبنای برچسب کمبود موجودی. */
+  const [lowStockThreshold, setLowStockThreshold] = useState(5)
 
   useEffect(() => {
     if (!configured) {
@@ -99,6 +104,20 @@ export default function WarehousesView({ configured, conn, storeName, onGoSettin
 
   // A status change (or any stock-affecting write) pushes data:stock-changed — reload.
   useEffect(() => api.onStockChanged(() => reloadView(setLoadCount)), [])
+
+  useEffect(() => {
+    if (!configured) return
+    let cancelled = false
+    api
+      .getSettings()
+      .then((s) => {
+        if (!cancelled) setLowStockThreshold(Math.min(9999, Math.max(1, Math.round(s.lowStockThreshold ?? 5))))
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [configured])
 
   useEffect(() => {
     if (!savedFlash) return
@@ -146,11 +165,12 @@ export default function WarehousesView({ configured, conn, storeName, onGoSettin
         whStock,
         sum: sumVals.length ? sumVals.reduce((a, b) => a + b, 0) : null,
         status: registered.length < list.length ? 'unregistered' : hasMismatch ? 'mismatch' : 'ok',
+        lowStock: siteVals.length ? siteVals.reduce((a, b) => a + b, 0) <= lowStockThreshold : false,
         items: list,
       })
     }
     return out
-  }, [overview])
+  }, [overview, lowStockThreshold])
 
   const counts = useMemo(
     () => ({
@@ -158,6 +178,7 @@ export default function WarehousesView({ configured, conn, storeName, onGoSettin
       mismatch: productRows.filter((p) => p.status === 'mismatch').length,
       unregistered: productRows.filter((p) => p.status === 'unregistered').length,
       ok: productRows.filter((p) => p.status === 'ok').length,
+      lowstock: productRows.filter((p) => p.lowStock).length,
     }),
     [productRows],
   )
@@ -173,7 +194,8 @@ export default function WarehousesView({ configured, conn, storeName, onGoSettin
           p.items.some((i) => (i.name + ' ' + (i.sku ?? '')).toLowerCase().includes(q)),
       )
     }
-    if (filter !== 'all') list = list.filter((p) => p.status === filter)
+    if (filter === 'lowstock') list = list.filter((p) => p.lowStock)
+    else if (filter !== 'all') list = list.filter((p) => p.status === filter)
     return list
   }, [productRows, search, filter])
 
@@ -384,6 +406,7 @@ export default function WarehousesView({ configured, conn, storeName, onGoSettin
                 >
                   {f.fa}
                   {f.key === 'mismatch' && counts.mismatch > 0 ? ` (${faNum(counts.mismatch)})` : ''}
+                  {f.key === 'lowstock' && counts.lowstock > 0 ? ` (${faNum(counts.lowstock)})` : ''}
                 </button>
               ))}
             </div>
@@ -543,23 +566,32 @@ export default function WarehousesView({ configured, conn, storeName, onGoSettin
                             )}
                           </td>
                           <td>
-                            {p.status === 'unregistered' ? (
-                              <span className="pill pill-amber">
-                                {p.isVariable
-                                  ? `نیاز به انبارداری (${faNum(p.registeredCombos)}/${faNum(p.comboCount)})`
-                                  : 'نیاز به انبارداری'}
-                              </span>
-                            ) : p.status === 'mismatch' ? (
-                              <span className="pill pill-red">
-                                {p.isVariable
-                                  ? `مغایرت در ${faNum(p.mismatchCombos)} ترکیب`
-                                  : simple.delta! > 0
-                                    ? 'انبار ' + faNum(simple.delta!) + ' بیشتر'
-                                    : 'انبار ' + faNum(-simple.delta!) + ' کمتر'}
-                              </span>
-                            ) : (
-                              <span className="pill pill-green">هماهنگ</span>
-                            )}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}>
+                              {p.status === 'unregistered' ? (
+                                <span className="pill pill-amber">
+                                  {p.isVariable
+                                    ? `نیاز به انبارداری (${faNum(p.registeredCombos)}/${faNum(p.comboCount)})`
+                                    : 'نیاز به انبارداری'}
+                                </span>
+                              ) : p.status === 'mismatch' ? (
+                                <span className="pill pill-red">
+                                  {p.isVariable
+                                    ? `مغایرت در ${faNum(p.mismatchCombos)} ترکیب`
+                                    : simple.delta! > 0
+                                      ? 'انبار ' + faNum(simple.delta!) + ' بیشتر'
+                                      : 'انبار ' + faNum(-simple.delta!) + ' کمتر'}
+                                </span>
+                              ) : (
+                                <span className="pill pill-green">هماهنگ</span>
+                              )}
+                              {p.lowStock && p.siteStock !== null && (
+                                <span className={'pill ' + (p.siteStock === 0 ? 'pill-red' : 'pill-amber')}>
+                                  {p.siteStock === 0
+                                    ? 'ناموجود'
+                                    : `کمبود موجودی (${faNum(p.siteStock)} عدد مانده)`}
+                                </span>
+                              )}
+                            </div>
                           </td>
                           <td>
                             <div className="cell-actions">

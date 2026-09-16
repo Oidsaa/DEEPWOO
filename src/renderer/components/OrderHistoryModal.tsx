@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { Customer, Order, OrdersResult } from '../../shared/types'
 import { api } from '../api'
-import { avatarPalette, faDate, faDigits, faNum, orderStatusMeta } from '../lib/format'
+import { avatarPalette, faDate, faDigits, faNum } from '../lib/format'
+import { useOrderStatusMeta } from '../lib/orderStatuses'
 import { useCurrency } from '../lib/currency'
 import { IconAlert, IconBag, IconRefresh, IconX } from './Icons'
 
@@ -176,7 +177,7 @@ export default function OrderHistoryModal({ customer, onClose }: Props) {
 
 function OrderCard({ order }: { order: Order }) {
   const cur = useCurrency()
-  const meta = orderStatusMeta(order.status)
+  const meta = useOrderStatusMeta(order.status)
   const lineTotal = order.line_items.reduce((a, l) => a + l.quantity, 0)
   const visibleItems = order.line_items.slice(0, 4)
   const hiddenCount = order.line_items.length - visibleItems.length

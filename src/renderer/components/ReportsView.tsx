@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { ConnState, CustomerInsights, OpsGroup, OpsOrderRow, Product, SalesReport, TopSeller } from '../../shared/types'
 import { api, isMock } from '../api'
-import { faDate, faDay, faDigits, faNum, faTime, orderStatusMeta } from '../lib/format'
+import { faDate, faDay, faDigits, faNum, faTime } from '../lib/format'
+import { statusCls, statusFa, useOrderStatusMeta } from '../lib/orderStatuses'
 import { useCurrency } from '../lib/currency'
 import { useSyncRefresh } from '../lib/liveSync'
 import { lastStoreSync } from '../lib/syncStamp'
@@ -210,7 +211,7 @@ function OverviewTab({ r, maxDay }: { r: SalesReport; maxDay: number }) {
               <div className="pd-empty">داده‌ای نیست.</div>
             ) : (
               r.statuses.map((s) => {
-                const meta = orderStatusMeta(s.label)
+                const meta = { fa: statusFa(s.label), cls: statusCls(s.label) }
                 const share = r.totals.revenue > 0 ? (s.total / r.totals.revenue) * 100 : 0
                 return (
                   <div className="rp-row" key={s.label}>
@@ -804,7 +805,7 @@ function OpsPanel({ title, sub, g, emptyNote }: { title: string; sub: string; g:
 }
 
 function OpsRow({ row }: { row: OpsOrderRow }) {
-  const meta = orderStatusMeta(row.status)
+  const meta = useOrderStatusMeta(row.status)
   return (
     <div className="rp-table ops">
       <span className="rp-t-cell-main">

@@ -3,7 +3,8 @@ import { createPortal } from 'react-dom'
 import type { MouseEvent as ReactMouseEvent } from 'react'
 import type { ConnState, Order, OrderNote, OrdersListResult, OrderStatusTotal, ReceiptType } from '../../shared/types'
 import { api, isMock } from '../api'
-import { avatarPalette, faDate, faDigits, faNum, faTime, orderStatusMeta } from '../lib/format'
+import { avatarPalette, faDate, faDigits, faNum, faTime } from '../lib/format'
+import { adoptOrderStatuses, statusCls, useOrderStatusMeta } from '../lib/orderStatuses'
 import { useCurrency } from '../lib/currency'
 import { useSyncRefresh } from '../lib/liveSync'
 import { forceRefresh, reloadView } from '../lib/refresh'
@@ -186,7 +187,10 @@ export default function OrdersView({ configured, conn, storeName, onGoSettings }
     api
       .listOrderStatusTotals()
       .then((list) => {
-        if (!cancelled) setStatusTotals(list)
+        if (!cancelled) {
+          setStatusTotals(list)
+          adoptOrderStatuses(list)
+        }
       })
       .catch(() => {
         if (!cancelled) setStatusTotals(null)
@@ -257,7 +261,7 @@ export default function OrdersView({ configured, conn, storeName, onGoSettings }
               {statusTotals
                 .filter((s) => s.total > 0) // وضعیت‌های بدون سفارش نمایش داده نمی‌شوند
                 .map((s) => {
-                  const meta = orderStatusMeta(s.slug)
+                  const meta = { fa: s.name || s.slug.replace(/-/g, ' '), cls: statusCls(s.slug) }
                   return (
                     <button
                       key={s.slug}
@@ -661,7 +665,7 @@ function OrderRow({
 }) {
   const cur = useCurrency()
   const pal = avatarPalette(order.customer_name ?? String(order.id))
-  const meta = orderStatusMeta(order.status)
+  const meta = useOrderStatusMeta(order.status)
   const dt = new Date(order.date_created)
   return (
     <tr className={selected ? 'tr-active' : undefined}>

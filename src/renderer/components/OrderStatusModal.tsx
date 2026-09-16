@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { Order, OrderStatusTotal } from '../../shared/types'
 import { api } from '../api'
-import { faDigits, faNum, ORDER_STATUS_META } from '../lib/format'
+import { faDigits, faNum } from '../lib/format'
+import { adoptOrderStatuses, statusCls, statusFa } from '../lib/orderStatuses'
 import { IconAlert, IconCheck, IconRefresh, IconSwap, IconX } from './Icons'
 
 interface Props {
@@ -18,36 +19,24 @@ interface Props {
 /** Registered site statuses that make no sense as a change target. */
 const NON_TARGET = new Set(['trash', 'auto-draft', 'checkout-draft'])
 
-/** Fallback when the store's own status list cannot be read. */
+/** Offline-only fallback: the seven WooCommerce core statuses (no invented ones). */
 const FALLBACK_OPTIONS = [
   'processing',
   'completed',
   'on-hold',
-  'pending-payment',
+  'pending',
   'failed',
   'cancelled',
   'refunded',
-  'sale-hazouri',
-  'foroshgah',
-  'kargah',
-  'courier-delivery',
-  'post-delivery',
-  'tipax-delivery',
-]
-  .filter((s) => ORDER_STATUS_META[s])
-  .map((s) => ({
-    value: s,
-    fa: ORDER_STATUS_META[s].fa,
-    cls: ORDER_STATUS_META[s].cls,
-  }))
+].map((s) => ({ value: s, fa: statusFa(s), cls: statusCls(s) }))
 
 function siteOptions(list: OrderStatusTotal[]): Array<{ value: string; fa: string; cls: string }> {
   return list
     .filter((s) => !NON_TARGET.has(s.slug))
     .map((s) => ({
       value: s.slug,
-      fa: ORDER_STATUS_META[s.slug]?.fa ?? (s.name && s.name !== s.slug ? s.name : s.slug.replace(/-/g, ' ')),
-      cls: ORDER_STATUS_META[s.slug]?.cls ?? 'pill-dim',
+      fa: (s.name && s.name !== s.slug ? s.name : '') || statusFa(s.slug),
+      cls: statusCls(s.slug),
     }))
 }
 
@@ -66,6 +55,7 @@ export default function OrderStatusModal({ order, orderIds, onClose, onChanged }
     api
       .listOrderStatusTotals()
       .then((list) => {
+        adoptOrderStatuses(list)
         if (!alive) return
         const opts = siteOptions(list)
         if (opts.length > 0) setOptions(opts)
@@ -121,7 +111,7 @@ export default function OrderStatusModal({ order, orderIds, onClose, onChanged }
               <div className="modal-title">تغییر وضعیت سفارش</div>
               <div className="modal-sub">
                 {target
-                  ? `سفارش ${target.label} — وضعیت کنونی: ${ORDER_STATUS_META[order!.status]?.fa ?? order!.status}`
+                  ? `سفارش ${target.label} — وضعیت کنونی: ${statusFa(order!.status)}`
                   : `${faNum(ids.length)} سفارش انتخاب‌شده`}
               </div>
             </div>
@@ -142,7 +132,7 @@ export default function OrderStatusModal({ order, orderIds, onClose, onChanged }
             <div className="notice ok fade-in">
               <IconCheck size={16} />
               <div>
-                وضعیت {faNum(ids.length)} سفارش به «{ORDER_STATUS_META[selected]?.fa ?? selected}» تغییر کرد.
+                وضعیت {faNum(ids.length)} سفارش به «{statusFa(selected)}» تغییر کرد.
               </div>
             </div>
           )}

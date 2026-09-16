@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { Order, Product, ProductOrdersResult } from '../../shared/types'
 import { api } from '../api'
-import { faDate, faDigits, faNum, orderStatusMeta } from '../lib/format'
+import { faDate, faDigits, faNum } from '../lib/format'
+import { useOrderStatusMeta } from '../lib/orderStatuses'
 import { useCurrency } from '../lib/currency'
 import { IconAlert, IconBag, IconBox, IconRefresh, IconX } from './Icons'
 
@@ -209,7 +210,7 @@ export default function ProductOrdersModal({ product, onClose }: Props) {
 
 function ProductOrderCard({ order, productId }: { order: Order; productId: number }) {
   const cur = useCurrency()
-  const meta = orderStatusMeta(order.status)
+  const meta = useOrderStatusMeta(order.status)
   const lines = linesOf(order, productId)
   const lineTotal = lines.reduce((a, l) => a + l.quantity, 0)
   const totalLines = order.line_items.reduce((a, l) => a + l.quantity, 0)

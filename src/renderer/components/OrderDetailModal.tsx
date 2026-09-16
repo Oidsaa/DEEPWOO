@@ -4,7 +4,8 @@ import type { FormEvent } from 'react'
 import type { Order, OrderNote } from '../../shared/types'
 import { provinceFa } from '../../shared/iran'
 import { api } from '../api'
-import { faDate, faDigits, faNum, faTime, orderStatusMeta } from '../lib/format'
+import { faDate, faDigits, faNum, faTime } from '../lib/format'
+import { useOrderStatusMeta } from '../lib/orderStatuses'
 import { useCurrency } from '../lib/currency'
 import { IconAlert, IconBag, IconNote, IconRefresh, IconX } from './Icons'
 
@@ -38,7 +39,7 @@ export default function OrderDetailModal({ order, onClose }: Props) {
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  const meta = orderStatusMeta(order.status)
+  const meta = useOrderStatusMeta(order.status)
   const items = order.line_items
   const itemsTotal = round2(items.reduce((a, l) => a + (Number(l.total) || 0), 0))
   const discount = Number(order.discount_total) || 0
