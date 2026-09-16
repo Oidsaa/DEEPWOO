@@ -304,7 +304,7 @@ export default function Sidebar({
           </div>
         )}
         {isMock && <div className="mock-chip">پیش‌نمایش با دادهٔ آزمایشی</div>}
-        <div className="sb-ver">نسخهٔ {faDigits('1.2')}</div>
+        <div className="sb-ver">نسخهٔ {faDigits('1.3')}</div>
       </div>
     </aside>
   )
