@@ -3951,6 +3951,19 @@ table.tbl {
   color: rgba(148, 163, 184, 0.8);
 }
 
+/* زیرنویس جزئیات — سطر دومِ سلول اکشن/تغییر (جای ستون حذف‌شدهٔ جزئیات) */
+.tbl-log .log-sub {
+  display: block;
+  font-weight: 400;
+  font-size: 12px;
+  color: rgba(148, 163, 184, 0.85);
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 2px;
+}
+
 .log-foot {
   display: flex;
   align-items: center;

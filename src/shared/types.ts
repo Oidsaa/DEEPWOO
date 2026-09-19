@@ -531,6 +531,8 @@ export interface OrderNote {
   id: number
   author: string
   date_created: string
+  /** UTC variant of date_created (site-local without zone) — the reliable one for timestamps. */
+  date_created_gmt?: string
   note: string
   /** true → customer note (also emailed / visible on the storefront); false → private/system note. */
   customer_note: boolean

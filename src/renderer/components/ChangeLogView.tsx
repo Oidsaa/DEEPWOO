@@ -231,7 +231,6 @@ function StaffLog({ conn }: { conn: ConnState }) {
                   <th>کارشناس</th>
                   <th>بخش</th>
                   <th>اکشن</th>
-                  <th>جزئیات</th>
                 </tr>
               </thead>
               <tbody>
@@ -244,8 +243,10 @@ function StaffLog({ conn }: { conn: ConnState }) {
                       <td>
                         <span className={`pill ${meta.cls}`}>{meta.fa}</span>
                       </td>
-                      <td className="log-title">{e.title}</td>
-                      <td className="log-details">{e.details ?? ''}</td>
+                      <td className="log-title">
+                        {e.title}
+                        {e.details ? <span className="log-sub">{e.details}</span> : null}
+                      </td>
                     </tr>
                   )
                 })}
@@ -365,7 +366,6 @@ function StoreChanges() {
                   <th>موجودیت</th>
                   <th>نوع</th>
                   <th>تغییر</th>
-                  <th>جزئیات</th>
                   <th>لحاظ‌شده توسط</th>
                 </tr>
               </thead>
@@ -385,8 +385,8 @@ function StoreChanges() {
                       <td className="log-title">
                         {e.summary}
                         <span className="log-details"> — {faNum(e.entityId)}</span>
+                        {e.details ? <span className="log-sub">{e.details}</span> : null}
                       </td>
-                      <td className="log-details">{e.details}</td>
                       <td className="log-actor">{e.actor ?? '—'}</td>
                     </tr>
                   )

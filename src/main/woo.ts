@@ -295,6 +295,61 @@ export async function getServerChangeLog(cfg: WooConfig, q: ChangeLogQuery): Pro
 }
 
 /**
+ * One action row of the shared change log — a change made from another device's
+ * app or from wp-admin. The app re-attributes the matching «تغییرات فروشگاه»
+ * rows to the actor's real name (see attributeAdminActions in store.ts).
+ */
+export interface AdminPanelAction {
+  /** ms epoch of the action. */
+  ts: number
+  /** Display name of the person who performed the action. */
+  user: string
+  /** order-create | order-update | order-status | product-create | product-update | user-create | user-update | customer-create | customer-update | variation-update | stock-save */
+  action: string
+  /** Order id / product SKU / customer email / numeric #id (depending on the action). */
+  target: string
+  /** Human title like «ویرایش سفارش #1024». */
+  title: string
+  /** Device tag the row was stamped with — «پنل مدیریت» for wp-admin rows, otherwise the source device's hostname. */
+  device: string
+}
+
+/**
+ * Read actions of OTHER devices (wp-admin + other apps) from the shared change
+ * log plugin — rows newer than `afterMs` (0 = everything, paged internally).
+ * Rows of this very device are excluded server-side (`exclude_device`, plugin
+ * ≥ 1.3.3): its own actions are already stamped correctly. On an older plugin
+ * the param is ignored, so the caller also drops self rows locally.
+ */
+export async function getAdminPanelActions(cfg: WooConfig, afterMs: number, excludeDevice?: string): Promise<AdminPanelAction[]> {
+  const out: AdminPanelAction[] = []
+  for (let page = 1; page <= 10; page++) {
+    const params: Record<string, string | number> = {
+      page,
+      per_page: 200,
+    }
+    if (excludeDevice) params.exclude_device = excludeDevice
+    else params.device = ADMIN_DEVICE // پلاگین قدیمی‌تر از ۱.۳.۳ — فقط اکشن‌های پنل
+    if (afterMs > 0) params.after = afterMs
+    const { data } = await wooRequest<any>(cfg, 'GET', '/wcapp/v1/log', params, undefined, 'wp', 10000)
+    const entries = Array.isArray(data?.entries) ? data.entries : []
+    for (const e of entries) {
+      out.push({
+        ts: Number(e?.ts) || 0,
+        user: String(e?.user ?? ''),
+        action: String(e?.action ?? ''),
+        target: String(e?.target ?? ''),
+        title: String(e?.title ?? ''),
+        device: String(e?.device ?? ''),
+      })
+    }
+    const total = Number(data?.total) || 0
+    if (entries.length === 0 || page * 200 >= total) break
+  }
+  return out.filter((a) => a.user && a.ts > 0)
+}
+
+/**
  * Customers are listed via wc/v2 (NOT v3): the v3 endpoint intentionally omits
  * `orders_count` and `total_spent` for performance, while the sync needs the
  * full record. v2 returns every field identically (same records, same
@@ -305,6 +360,37 @@ export async function getServerChangeLog(cfg: WooConfig, q: ChangeLogQuery): Pro
 
 /** Cap on pages walked while syncing the customers (100 per page). */
 export const MAX_CUSTOMER_SYNC_PAGES = 100 // 100 × 100 = up to 10,000 customers
+
+/** Device tag the plugin stamps on wp-admin rows (matches insert_admin_entry). */
+export const ADMIN_DEVICE = 'پنل مدیریت'
+
+/**
+ * Author attribution from the site's own order notes — the authoritative source
+ * for «لحاظ‌شده توسط» when the change was made on ANOTHER device (e.g. another
+ * staff member's desktop app with their own API key, or wp-admin). The local
+ * sync can only stamp its own account's name on rows it discovers; the note
+ * author is the human who actually made the change (WooCommerce writes
+ * status-change and line-item notes with the acting user's display name).
+ *
+ * Returns every HUMAN note as { ts (epoch ms, UTC), author } — system notes
+ * (SMS/email/payment/stock) are filtered out; matching against the local
+ * change_log rows happens in store.ts.
+ */
+export async function orderNoteAuthors(cfg: WooConfig, orderId: number): Promise<Array<{ ts: number; author: string }>> {
+  const res = await listOrderNotes(cfg, orderId)
+  const out: Array<{ ts: number; author: string }> = []
+  for (const n of res) {
+    const iso = n.date_created_gmt || n.date_created
+    if (!iso) continue
+    const t = Date.parse(/(?:Z|[+-]\d{2}:?\d{2})$/.test(iso) ? iso : iso + 'Z')
+    if (!Number.isFinite(t)) continue
+    // یادداشت‌های سیستمی (پیامک/ایمیل/پرداخت/انبار) نویسندهٔ انسانی ندارند.
+    const a = String(n.author ?? '').trim()
+    if (!a || a === 'system' || a === 'System' || a === 'WooCommerce') continue
+    out.push({ ts: t, author: a })
+  }
+  return out
+}
 
 /**
  * Generic REST list walker: pages a listing endpoint until a page comes back

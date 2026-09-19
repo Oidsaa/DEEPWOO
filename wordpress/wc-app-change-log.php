@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WC App Change Log
  * Description: جدول لاگ تغییرات مشترک برای داشبورد دسکتاپ ووکامرس — ثبت و خواندن اکشن کارشناس‌ها از طریق REST، با احراز هویت کلیدهای API ووکامرس (OAuth 1.0a یا query-string). نام کارشناس از صاحب کلید API خوانده می‌شود؛ اکشن‌های مدیران از پنل مدیریت وردپرس هم ثبت می‌شود.
- * Version: 1.2.0
+ * Version: 1.3.3
  * Requires PHP: 7.2
  * Author: DEEPWOO
  */
@@ -102,15 +102,24 @@ class WcAppChangeLog {
 	/** آخرین سفارشی که در همین درخواست تغییر وضعیت داده شد — تا ردیف تکراری «ویرایش» ننویسیم. */
 	private static $status_changed_order = 0;
 
-	/** آیا این تغییر باید از پنل ثبت شود؟ (نه REST، و کاربر فعلی مدیر/کارشناس است) */
+	/** آیا این تغییر باید از پنل ثبت شود؟ (فقط درخواست‌های برنامهٔ دسکتاپ رد می‌شوند) */
 	private static function is_admin_action() {
-		if ( defined( 'REST_REQUEST' ) && REST_REQUEST ) {
+		if ( self::is_app_request() ) {
 			return false; // اکشن‌های برنامهٔ دسکتاپ — خود برنامه ثبت می‌کند.
 		}
 		if ( ! is_user_logged_in() || ! current_user_can( 'manage_woocommerce' ) ) {
 			return false; // مشتری، ناشناس یا نقش بدون دسترسی فروشگاه.
 		}
 		return true;
+	}
+
+	/** آیا این درخواست با کلید API ووکامرس (برنامهٔ دسکتاپ) احراز شده؟ */
+	private static function is_app_request() {
+		$oauth = self::oauth_params();
+		if ( ! empty( $oauth['oauth_consumer_key'] ) ) {
+			return true;
+		}
+		return '' !== (string) ( $_GET['consumer_key'] ?? '' );
 	}
 
 	/** درج یک ردیف اکشن پنل مدیریت با هویت کاربر فعلی. */
@@ -400,6 +409,19 @@ class WcAppChangeLog {
 		$where = [];
 		$args  = [];
 
+		$device = trim( (string) $request->get_param( 'device' ) );
+		if ( '' !== $device ) {
+			$where[] = 'device = %s';
+			$args[]  = $device;
+		}
+
+		// ردیف‌های یک دستگاه مشخص کنار گذاشته شوند (مثلاً دستگاهِ خودِ درخواست‌کننده).
+		$exclude_device = trim( (string) $request->get_param( 'exclude_device' ) );
+		if ( '' !== $exclude_device ) {
+			$where[] = 'device <> %s';
+			$args[]  = $exclude_device;
+		}
+
 		$user = trim( (string) $request->get_param( 'user' ) );
 		if ( '' !== $user ) {
 			$where[] = 'user_name = %s';
@@ -522,7 +544,7 @@ class WcAppChangeLog {
 			return new WP_Error( 'wcapp_bad_key', 'کلید API معتبر نیست.', [ 'status' => 401 ] );
 		}
 
-		if ( ! self::verify_signature( (string) $row['consumer_secret'], $oauth ) ) {
+		if ( ! self::verify_signature( (string) $row['consumer_secret'], $oauth, $request ) ) {
 			return new WP_Error( 'wcapp_bad_signature', 'امضای OAuth معتبر نیست.', [ 'status' => 401 ] );
 		}
 
@@ -591,12 +613,21 @@ class WcAppChangeLog {
 		return $params;
 	}
 
-	private static function verify_signature( $consumer_secret, array $oauth ) {
+	/**
+	 * تأیید امضا.
+	 *
+	 * مطابق استاندارد OAuth 1.0a (و پیاده‌سازی خود ووکامرس)، علاوه بر
+	 * پارامترهای oauth_*، همهٔ پارامترهای کوئری هم در پایهٔ امضا شرکت
+	 * می‌کنند — وگرنه هر درخواستی که آرگومان داشته باشد (مثل page/device/after)
+	 * با خطای ۴۰۱ رد می‌شود.
+	 */
+	private static function verify_signature( $consumer_secret, array $oauth, WP_REST_Request $request ) {
 		$signature = (string) ( $oauth['oauth_signature'] ?? '' );
 		if ( '' === $signature ) {
 			return false;
 		}
-		unset( $oauth['oauth_signature'] );
+
+		$params = self::signature_params( $request, $oauth );
 
 		$method = strtoupper( $_SERVER['REQUEST_METHOD'] ?? 'GET' );
 		$url    = self::current_url();
@@ -604,7 +635,7 @@ class WcAppChangeLog {
 		// مثل خود ووکامرس: اگر با اسکیم فعلی نخورد، اسکیم دیگر هم امتحان می‌شود.
 		foreach ( [ is_ssl() ? 'https' : 'http', is_ssl() ? 'http' : 'https' ] as $scheme ) {
 			$try_url = $scheme . '://' . substr( $url, strpos( $url, '://' ) + 3 );
-			if ( hash_equals( self::compute_signature( $method, $try_url, $oauth, $consumer_secret ), $signature ) ) {
+			if ( hash_equals( self::compute_signature( $method, $try_url, $params, $consumer_secret ), $signature ) ) {
 				return true;
 			}
 		}
@@ -617,6 +648,27 @@ class WcAppChangeLog {
 		$path   = (string) parse_url( (string) ( $_SERVER['REQUEST_URI'] ?? '/' ), PHP_URL_PATH );
 
 		return $scheme . '://' . $host . ( '' !== $path ? $path : '/' );
+	}
+
+	/**
+	 * پارامترهای پایهٔ امضا: oauth_* (بدون oauth_signature) + همهٔ پارامترهای کوئری.
+	 *
+	 * دقت: oauth_signature خودش هم جزو کوئری ارسال می‌شود — نباید دوباره داخل
+	 * پایهٔ امضا بیفتد، وگرنه همهٔ درخواست‌ها (حتی بدون پارامتر) رد می‌شوند.
+	 */
+	private static function signature_params( WP_REST_Request $request, array $oauth ) {
+		unset( $oauth['oauth_signature'] );
+		foreach ( (array) $request->get_query_params() as $k => $v ) {
+			if ( is_array( $v ) ) {
+				continue; // برنامهٔ دسکتاپ پارامتر آرایه‌ای نمی‌فرستد.
+			}
+			$k = (string) $k;
+			if ( 0 === stripos( $k, 'oauth_' ) ) {
+				continue; // oauth_* فقط از $oauth؛ به‌ویژه oauth_signature.
+			}
+			$oauth[ $k ] = (string) $v;
+		}
+		return $oauth;
 	}
 
 	private static function compute_signature( $method, $url, array $params, $secret ) {

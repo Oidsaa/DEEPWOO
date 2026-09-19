@@ -44,6 +44,7 @@ import type {
 } from '../shared/types'
 import { faStatus } from '../shared/statusLabels'
 import { normalizePhone } from '../shared/phone'
+import type { AdminPanelAction } from './woo'
 import { persianMonthKey } from '../shared/persianMonth'
 import { aggregateSalesReport, reportCountsToward, resolveReportWindow } from '../shared/reports'
 
@@ -401,6 +402,222 @@ export function listSyncChanges(q: SyncChangeQuery = {}): SyncChangeResult {
     ts: Number(r.ts),
   }))
   return { entries, total: Number(totalRow.c), page, perPage }
+}
+
+/* ------------------------------------------------------------------ */
+/* Attribution of wp-admin actions (لحاظ‌شده توسط)                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * صف «نام نویسندهٔ یادداشت‌های سفارش» — سینک پس از هر گذر سفارش‌ها، سفارش‌های
+ * تغییرکرده را اینجا می‌گذارد تا مرحلهٔ انتساب (که شبکه‌ای است) آن‌ها را یکی‌یکی
+ * پردازد و از یادداشت‌های سایت، نام نویسندهٔ واقعی را روی ردیف‌های محلی بگذارد.
+ */
+export function setLocalActorPending(orderId: number, actor: string | null): void {
+  if (!db) return
+  stmt('CREATE TABLE IF NOT EXISTS pending_note_actors (order_id INTEGER PRIMARY KEY, actor TEXT NULL)').run()
+  // فقط تغییرات اخیر (۷ روز) صف می‌شوند — سفارش‌های قدیمیِ گذر پایه نیازی به انتساب ندارند.
+  const last = stmt(
+    'SELECT ts FROM change_log WHERE entity = ? AND entity_id = ? ORDER BY ts DESC LIMIT 1',
+  ).get('orders', orderId) as { ts?: number } | undefined
+  if (!last?.ts || Number(last.ts) < Date.now() - 7 * 24 * 60 * 60 * 1000) return
+  stmt('INSERT OR REPLACE INTO pending_note_actors (order_id, actor) VALUES (?, ?)').run(orderId, actor)
+}
+
+/** نگاشت اکشنِ لاگ مشترک (اپ‌های دسکتاپ + پنل wp-admin) به نوع تغییرِ «تغییرات فروشگاه». */
+const ADMIN_ACTION_TO_CHANGE: Record<string, { change: string; entity: 'orders' | 'products' | 'customers' }> = {
+  'order-create': { change: 'created', entity: 'orders' },
+  'order-update': { change: 'updated', entity: 'orders' },
+  'order-status': { change: 'status_changed', entity: 'orders' },
+  'product-create': { change: 'created', entity: 'products' },
+  'product-update': { change: 'updated', entity: 'products' },
+  'variation-update': { change: 'updated', entity: 'products' },
+  'stock-save': { change: 'updated', entity: 'products' },
+  'user-create': { change: 'created', entity: 'customers' },
+  'user-update': { change: 'updated', entity: 'customers' },
+  'customer-create': { change: 'created', entity: 'customers' },
+  'customer-update': { change: 'updated', entity: 'customers' },
+}
+
+/** cursor خواندن اکشن‌های پنل مدیریت — در جدول meta (بقا در ری‌استارت). */
+const ADMIN_ATTR_CURSOR = 'admin_attr_cursor'
+
+export function getAdminAttrCursor(): number {
+  const row = stmt('SELECT value FROM meta WHERE key = ?').get(ADMIN_ATTR_CURSOR) as { value?: string } | undefined
+  const n = Number(row?.value ?? 0)
+  return Number.isFinite(n) && n > 0 ? n : 0
+}
+
+export function setAdminAttrCursor(ms: number): void {
+  stmt('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run(ADMIN_ATTR_CURSOR, String(Math.max(0, Math.floor(ms))))
+}
+
+/** id سفارش از target عددی (یا #123 داخل title). */
+function adminOrderTarget(a: { target: string; title: string }): number | null {
+  const t = a.target.trim()
+  if (/^\d+$/.test(t)) return Number(t)
+  const m = a.title.match(/#(\d+)/)
+  return m ? Number(m[1]) : null
+}
+
+/** id محصول: اول target عددی/#123 (اکشن‌های اپ‌های دسکتاپ)، بعد SKU (اکشن‌های wp-admin). */
+function adminProductTarget(a: { target: string; title: string }): number | null {
+  const t = a.target.trim()
+  if (/^\d+$/.test(t)) return Number(t)
+  const m = a.title.match(/#(\d+)/)
+  if (m) return Number(m[1])
+  const sku = t
+  if (!sku) return null
+  const row = stmt('SELECT id FROM products WHERE sku = ? LIMIT 1').get(sku) as { id?: number } | undefined
+  return row ? Number(row.id) : null
+}
+
+/** id مشتری: اول target عددی/#123 (اکشن‌های اپ‌های دسکتاپ)، بعد ایمیل (اکشن‌های wp-admin). */
+function adminCustomerTarget(a: { target: string; title: string }): number | null {
+  const t = a.target.trim()
+  if (/^\d+$/.test(t)) return Number(t)
+  const m = a.title.match(/#(\d+)/)
+  if (m) return Number(m[1])
+  const email = t.toLowerCase()
+  if (!email || !email.includes('@')) return null
+  const row = stmt('SELECT id FROM customers WHERE LOWER(email) = ? LIMIT 1').get(email) as { id?: number } | undefined
+  return row ? Number(row.id) : null
+}
+
+/**
+ * Re-attribute local «تغییرات فروشگاه» rows to the real wp-admin author.
+ *
+ * A sync pass discovers that order #1024 changed, but the row is stamped with
+ * the LOCAL device's active account. When the change was actually made by an
+ * admin in wp-admin, the shared plugin table holds a «پنل مدیریت» row for the
+ * same change. We match plugin rows to local rows (entity + change type +
+ * target + time window) and rewrite the local actor to the admin's name.
+ */
+/**
+ * انتساب از یادداشت‌های سفارش: برای هر سفارشِ در صف، نویسندهٔ یادداشتِ متناظر از
+ * سایت خوانده می‌شود و ردیف‌های «تغییرات فروشگاه» که مهرِ اکانتِ محلی دارند، به
+ * نام او بازمهر می‌خورند. منبعِ قطعیِ نام برای تغییراتِ همهٔ دستگاه‌ها (اپِ هر
+ * کارشناس با کلید خودش یا پنل وردپرس) — مستقل از پلاگین.
+ *
+ * `fetchAuthor` شبکه‌ای است و جدا از دیتابیس صدا می‌شود؛ هر شکست فقط پردازش
+ * همان سفارش را به گذر بعدی می‌سپارد (صف تا موفقیت نگه داشته می‌شود).
+ */
+export async function attributeOrderNotes(
+  fetchNotes: (orderId: number) => Promise<Array<{ ts: number; author: string }>>,
+): Promise<number> {
+  if (!db) return 0
+  stmt('CREATE TABLE IF NOT EXISTS pending_note_actors (order_id INTEGER PRIMARY KEY, actor TEXT NULL)').run()
+  // سقف ۲۰ سفارش در هر گذر — یک گذر پایهٔ بزرگ نباید صدها درخواست یادداشت بزند؛
+  // باقی صف برای گذرهای بعدی می‌ماند.
+  const queued = stmt('SELECT order_id, actor FROM pending_note_actors ORDER BY order_id LIMIT 20').all() as Array<{
+    order_id: number
+    actor: string | null
+  }>
+  let processed = 0
+  for (const { order_id: oid, actor } of queued) {
+    let notes: Array<{ ts: number; author: string }>
+    try {
+      notes = await fetchNotes(oid)
+    } catch {
+      continue // شبکه قطع/خطای خواندن — سفارش در صف می‌ماند تا گذر بعدی
+    }
+    // ردیف‌های محلی این سفارش که هنوز مهر اکانتِ محلی دارند؛ هر ردیف نزدیک‌ترین
+    // یادداشت انسانی به زمانِ خودش را می‌گیرد (تغییر وضعیت → یادداشت وضعیت،
+    // ایجاد → یادداشت اقلام، و…). مبنای تطبیق، زمانِ واقعیِ تغییر روی سایت است
+    // (ایجاد → date_created، بقیه → date_modified) — نه زمانِ کشفِ سینک که
+    // می‌تواند دقیقه‌ها بعد از خود تغییر باشد و از پنجره خارج شود.
+    const rows = stmt(
+      `SELECT c.id, c.ts, c.change_type, o.date_created_gmt, o.date_modified_gmt
+       FROM change_log c JOIN orders o ON o.id = c.entity_id
+       WHERE c.entity = 'orders' AND c.entity_id = ? AND c.actor IS ?`,
+    ).all(oid, actor ?? null) as Array<{
+      id: number
+      ts: number
+      change_type: string
+      date_created_gmt: string
+      date_modified_gmt: string
+    }>
+    for (const r of rows) {
+      const realIso = r.change_type === 'created' ? r.date_created_gmt : r.date_modified_gmt
+      const realTs = realIso ? Date.parse(/(?:Z|[+-]\d{2}:?\d{2})$/.test(realIso) ? realIso : realIso + 'Z') : NaN
+      const baseTs = Number.isFinite(realTs) ? realTs : Number(r.ts)
+      let best: { delta: number; name: string } | null = null
+      for (const n of notes) {
+        const delta = Math.abs(n.ts - baseTs)
+        if (delta > 15 * 60_000) continue
+        if (!best || delta < best.delta) best = { delta, name: n.author }
+      }
+      if (best && best.name !== (actor ?? '')) {
+        stmt('UPDATE change_log SET actor = ? WHERE id = ?').run(best.name, r.id)
+      }
+    }
+    stmt('DELETE FROM pending_note_actors WHERE order_id = ?').run(oid)
+    processed += 1
+  }
+  return processed
+}
+
+/** یک‌بار در هر نصب: صف‌گذاریِ گذشته — سفارش‌هایِ ردیف‌های هفتهٔ اخیر که هنوز مهر اکانت محلی دارند. */
+export function backfillNoteQueue(localActor: string | null): number {
+  if (!db) return 0
+  stmt('CREATE TABLE IF NOT EXISTS pending_note_actors (order_id INTEGER PRIMARY KEY, actor TEXT NULL)').run()
+  const FLAG = 'note_attr_backfill_v1'
+  const done = stmt('SELECT value FROM meta WHERE key = ?').get(FLAG) as { value?: string } | undefined
+  if (done) return 0
+  const since = Date.now() - 7 * 24 * 60 * 60 * 1000
+  const rows = stmt(
+    `SELECT DISTINCT entity_id FROM change_log
+     WHERE entity = 'orders' AND ts >= ? AND ((? IS NULL AND actor IS NULL) OR actor = ?)
+     ORDER BY ts DESC LIMIT 200`,
+  ).all(since, localActor, localActor ?? '') as Array<{ entity_id: number }>
+  for (const r of rows) {
+    stmt('INSERT OR REPLACE INTO pending_note_actors (order_id, actor) VALUES (?, ?)').run(r.entity_id, localActor)
+  }
+  stmt('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run(FLAG, String(rows.length))
+  return rows.length
+}
+
+export function attributeAdminActions(actions: AdminPanelAction[]): number {
+  if (!db || actions.length === 0) return 0
+  const WINDOW_BEFORE = 60 * 60 * 1000 // اختلاف ساعتِ سایت/دستگاه
+  const WINDOW_AFTER = 7 * 24 * 60 * 60 * 1000 // سینکِ دیررسِ یک تغییرِ قدیمی را هم پوشش دهد
+  let updated = 0
+
+  // برای هر ردیف محلی، نزدیک‌ترین اکشن (در زمان) برنده است — نه آخرین اکشنِ پردازش‌شده.
+  const best = new Map<number, { delta: number; user: string }>()
+
+  for (const a of actions) {
+    const mapped = ADMIN_ACTION_TO_CHANGE[a.action]
+    if (!mapped) continue
+    let entityId: number | null = null
+    if (mapped.entity === 'orders') entityId = adminOrderTarget(a)
+    else if (mapped.entity === 'products') entityId = adminProductTarget(a)
+    else entityId = adminCustomerTarget(a)
+    if (entityId == null) continue
+
+    // ردیف‌های محلیِ همین موجودیت/نوع در پنجرهٔ زمانی مجاز.
+    const rows = stmt(
+      `SELECT id, ts FROM change_log
+       WHERE entity = ? AND entity_id = ? AND change_type = ? AND ts >= ? AND ts <= ?
+       ORDER BY ts DESC`,
+    ).all(mapped.entity, entityId, mapped.change, a.ts - WINDOW_BEFORE, a.ts + WINDOW_AFTER) as Array<{
+      id: number
+      ts: number
+    }>
+
+    for (const row of rows) {
+      const delta = Math.abs(row.ts - a.ts)
+      const prev = best.get(row.id)
+      if (!prev || delta < prev.delta) best.set(row.id, { delta, user: a.user })
+    }
+  }
+
+  for (const [rowId, { user }] of best) {
+    stmt('UPDATE change_log SET actor = ? WHERE id = ?').run(user, rowId)
+    updated += 1
+  }
+
+  return updated
 }
 
 /* ------------------------------------------------------------------ */

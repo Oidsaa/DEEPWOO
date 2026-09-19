@@ -12,23 +12,31 @@
  * an incomplete remote id list must never delete local rows.
  */
 
+import os from 'node:os'
 import type { Settings, SyncEntityState } from '../shared/types'
 import { SYNC_DEFAULTS, getSettings } from './settings'
 import {
   PRODUCT_STATUSES,
+  attributeAdminActions,
+  attributeOrderNotes,
+  backfillNoteQueue,
   catalog,
   deleteMissingOrders,
   deleteMissingProducts,
   finishSync,
+  getAdminAttrCursor,
   getSyncRow,
   replaceVariationsOf,
+  setAdminAttrCursor,
   setChangeActor,
+  setLocalActorPending,
   upsertCustomer,
   upsertOrder,
   upsertProduct,
   upsertVariation,
 } from './store'
 import type { SyncEntity } from './store'
+import { orderNoteAuthors } from './woo'
 import {
   scanOrderIds,
   scanProductIds,
@@ -37,6 +45,7 @@ import {
   walkProductPages,
   walkVariationPages,
 } from './woo'
+import { getAdminPanelActions } from './woo'
 import type { WooConfig } from './woo'
 
 const ENTITIES: SyncEntity[] = ['orders', 'products', 'customers']
@@ -85,6 +94,38 @@ function configured(cfg: WooConfig | Settings): boolean {
 /* Per-entity passes                                                    */
 /* ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ */
+/* انتساب تغییرات مدیران («لحاظ‌شده توسط»)                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * After each successful pass: read the wp-admin rows the shared plugin logged
+ * since the last check and re-stamp matching local change_log rows with the
+ * admin's real name. Best-effort — a failure just skips this pass; the cursor
+ * only advances on success, so the next pass retries.
+ */
+async function attributeAdminChanges(cfg: WooConfig): Promise<void> {
+  try {
+    // ۱) انتساب از یادداشت‌های سفارش — منبع قطعی نام (مستقل از پلاگین) برای
+    // تغییرات همهٔ دستگاه‌ها؛ شامل ردیف‌های قدیمی‌تر از cursor هم می‌شود.
+    // یک‌بار در هر نصب: ردیف‌های موجودِ هفتهٔ اخیر (مثل سفارش‌های قبل از آپدیت)
+    // هم صف می‌شوند تا بازمهر بخورند.
+    backfillNoteQueue(actorOf(getSettings()))
+    await attributeOrderNotes(async (orderId) => orderNoteAuthors(cfg, orderId))
+
+    // ۲) انتساب از لاگ مشترک پلاگین: اکشن‌های همهٔ دستگاه‌های دیگر (اپِ کارشناس‌ها
+    // با کلید خودشان) و پنل wp-admin. ردیف‌های خودِ این دستگاه سمت سایت کنار گذاشته
+    // می‌شوند (exclude_device) — مهرشان از قبل درست است.
+    const after = getAdminAttrCursor()
+    // پنج دقیقه همپوشانی برای اینکه ردیف‌های همزمان با cursor جا نیفتند.
+    const actions = await getAdminPanelActions(cfg, after > 0 ? after - 5 * 60_000 : 0, os.hostname())
+    if (actions.length > 0) attributeAdminActions(actions)
+    setAdminAttrCursor(Date.now())
+  } catch {
+    /* پلاگین قدیمی، قطع شبکه یا خطای خواندن — گذر بعدی جبران می‌کند */
+  }
+}
+
 function deltaExtra(cursorMs: number | null): Record<string, string | number> {
   // `modified_after` narrows the walk server-side; older WooCommerce versions
   // ignore it and return everything — the upserts are idempotent, so a full
@@ -96,7 +137,13 @@ async function syncOrders(cfg: WooConfig): Promise<{ truncated: boolean }> {
   const row = getSyncRow('orders')
   const cursor = row.lastSyncAt && row.cursor != null ? row.cursor : null
   const res = await walkOrderPages(cfg, deltaExtra(cursor), (orders) => {
-    for (const o of orders) upsertOrder(o)
+    for (const o of orders) {
+      const actorBefore = actorOf(getSettings())
+      const outcome = upsertOrder(o)
+      // ردیف تازهٔ تغییر (به‌جز «بدون تغییر») به صف انتساب از یادداشت‌ها می‌رود —
+      // نام واقعی سازندهٔ تغییر (اپِ دستگاه دیگر یا پنل) آنجا معلوم می‌شود.
+      if (outcome !== 'unchanged') setLocalActorPending(o.id, actorBefore)
+    }
     pingProgress('orders')
   })
 
@@ -189,6 +236,7 @@ async function syncEntity(cfg: WooConfig, entity: SyncEntity): Promise<void> {
   }
   finishSync(entity, { cursor: start - SYNC_OVERLAP_MS, truncated })
   onSyncedCb?.(entity)
+  await attributeAdminChanges(cfg)
 }
 
 /* ------------------------------------------------------------------ */
